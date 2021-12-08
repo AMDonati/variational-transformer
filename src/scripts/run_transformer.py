@@ -3,6 +3,7 @@ from src.data_provider.ROCDataset import ROCDataset
 from src.models.transformer import Transformer
 from src.train.train_transformer import train
 from src.train.utils import CustomSchedule, get_checkpoints
+from src.eval.eval import inference
 import tensorflow as tf
 import os
 import datetime
@@ -10,12 +11,13 @@ import logging
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import json
 
 
 def get_parser():
     parser = argparse.ArgumentParser()
     # data parameters:
-    #parser.add_argument("-data_path", type=str, required=True, help="path for uploading the dataset")
+    # parser.add_argument("-data_path", type=str, required=True, help="path for uploading the dataset")
     parser.add_argument("-max_samples", type=int, default=500, help="max samples for train dataset")
     # model parameters:
     parser.add_argument("-num_layers", type=int, default=1,
@@ -33,14 +35,11 @@ def get_parser():
     parser.add_argument("-output_path", type=str, default="output", help="path for output folder")
     parser.add_argument("-save_path", type=str, help="path for saved model folder (if loading ckpt)")
     # inference params.
-    parser.add_argument("-past_len", type=int, default=4, help="number of timesteps for past timesteps at inference")
-    parser.add_argument("-future_len", type=int, default=5,
-                        help="number of predicted timesteps for multistep forecast.")
-    parser.add_argument("-mc_samples", type=int, default=1, help="number of samples for MC Dropout algo.")
     parser.add_argument("-test_samples", type=int, help="number of test samples.")
-    parser.add_argument("-temp", type=float, default=1., help="temperature for sampling text.")
+    parser.add_argument("-temp", type=float, default=0.7, help="temperature for sampling text.")
 
     return parser
+
 
 def create_logger(out_path):
     out_file_log = os.path.join(out_path, 'training_log.log')
@@ -61,6 +60,14 @@ def create_logger(out_path):
     return logger
 
 
+def save_hparams(args, out_path):
+    dict_hparams = vars(args)
+    dict_hparams = {key: str(value) for key, value in dict_hparams.items()}
+    config_path = os.path.join(out_path, "config.json")
+    with open(config_path, 'w') as fp:
+        json.dump(dict_hparams, fp, sort_keys=True, indent=4)
+
+
 def create_ckpt_path(args, out_path):
     if args.save_path is not None:
         checkpoint_path = os.path.join(args.save_path, "checkpoints")
@@ -76,14 +83,15 @@ def create_out_path(args):
         return args.save_path
     else:
         out_file = 'Transformer_{}L_d{}_dff{}_pe{}_bs{}_pdrop{}'.format(args.num_layers, args.d_model, args.dff,
-                                                                         args.pe,
-                                                                         args.bs,
-                                                                         args.p_drop)
+                                                                        args.pe,
+                                                                        args.bs,
+                                                                        args.p_drop)
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
         if not os.path.isdir(output_folder):
             os.makedirs(output_folder)
         return output_folder
+
 
 def plot_results(results, out_path):
     train_loss = results["train_loss"]
@@ -96,10 +104,10 @@ def plot_results(results, out_path):
 
 
 def run(args):
-
-    # Create out path & logger
+    # Create out path & logger & config.json file
     out_path = create_out_path(args)
     logger = create_logger(out_path)
+    save_hparams(args, out_path)
 
     # Load Dataset
     dataset = ROCDataset(data_path='data/ROC', batch_size=args.bs, max_samples=args.max_samples)
@@ -128,9 +136,27 @@ def run(args):
     # save results
     df_results = pd.DataFrame.from_records(results)
     df_results.to_csv(os.path.join(out_path, "train_history.csv"))
-
     # plot_results
     plot_results(results, out_path)
+
+    # generate text at inference
+    start_token = dataset.vocab["<SOS>"]
+    inputs, targets, preds = inference(transformer=transformer, test_dataset=test_dataset, start_token=start_token, temp=args.temp)
+    print(inputs.shape)
+    print(targets.shape)
+    print(preds.shape)
+    inference_path = os.path.join(out_path, "inference")
+    if not os.path.isdir(inference_path):
+        os.makedirs(inference_path)
+    for (path, arr) in zip([os.path.join(inference_path, "inputs.npy"), os.path.join(inference_path, "targets.npy"),
+                            os.path.join(inference_path, "preds.npy")], [inputs, targets, preds]):
+        np.save(path, arr)
+    text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
+    text_preds = dataset.tokenizer.decode_batch(preds.numpy())
+    text_targets = dataset.tokenizer.decode_batch(targets.numpy())
+    text_df = pd.DataFrame.from_records(
+        dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
+    text_df.to_csv(os.path.join(inference_path, "texts.csv"))
 
 if __name__ == '__main__':
     parser = get_parser()

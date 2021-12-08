@@ -13,6 +13,12 @@ class Tokenizer:
             code = torch.tensor(code)
         return code
 
+    def decode_batch(self, tensor, **kwargs):
+        texts = []
+        for b in range(tensor.shape[0]):
+            texts.append(self.decode(tensor[b], **kwargs))
+        return texts
+
     def decode(self, text, **kwargs):
         decode = self.decode_(text, idx_to_token=self.idx_to_token, stop_at_end=True, delim=' ',
                               ignored=["<SOS>", "<PAD>"])
