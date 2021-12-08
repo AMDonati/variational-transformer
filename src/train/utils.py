@@ -30,13 +30,24 @@ def get_checkpoints(transformer, optimizer, checkpoint_path):
     return ckpt_manager
 
 def loss_function(real, pred, loss_object):
-    mask = tf.math.logical_not(tf.math.equal(real, 0))
-    loss_ = loss_object(real, pred)
+  mask = tf.math.logical_not(tf.math.equal(real, 0))
+  loss_ = loss_object(real, pred)
 
-    mask = tf.cast(mask, dtype=loss_.dtype)
-    loss_ *= mask
+  mask = tf.cast(mask, dtype=loss_.dtype)
+  loss_ *= mask
 
-    return tf.reduce_mean(loss_)
+  return tf.reduce_sum(loss_)/tf.reduce_sum(mask)
+
+
+def accuracy_function(real, pred):
+  accuracies = tf.equal(real, tf.argmax(pred, axis=-1))
+
+  mask = tf.math.logical_not(tf.math.equal(real, 0))
+  accuracies = tf.math.logical_and(mask, accuracies)
+
+  accuracies = tf.cast(accuracies, dtype=tf.float32)
+  mask = tf.cast(mask, dtype=tf.float32)
+  return tf.reduce_sum(accuracies)/tf.reduce_sum(mask)
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
