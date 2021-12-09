@@ -1,4 +1,5 @@
 import tensorflow as tf
+import os
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -48,6 +49,15 @@ def accuracy_function(real, pred):
   accuracies = tf.cast(accuracies, dtype=tf.float32)
   mask = tf.cast(mask, dtype=tf.float32)
   return tf.reduce_sum(accuracies)/tf.reduce_sum(mask)
+
+def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, global_step):
+    with writer.as_default():
+        tf.summary.scalar("loss", loss, step=global_step)
+        tf.summary.scalar("ce_loss", ce_loss, step=global_step)
+        tf.summary.scalar("kl_loss", kl_loss, step=global_step)
+        tf.summary.scalar("accuracy", accuracy, step=global_step)
+        if kl_weights is not None:
+            tf.summary.scalar("kl_weight", kl_weights, step=global_step)
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt

@@ -2,6 +2,7 @@ import tensorflow as tf
 from src.models.encoder import Encoder, VAEEncoder
 from src.models.decoder import Decoder, VAEDecoder
 from src.models.transformer_utils import create_look_ahead_mask, create_padding_mask
+from src.models.vae_utils import gaussian_kld
 
 
 class Transformer(tf.keras.Model):
@@ -30,7 +31,9 @@ class Transformer(tf.keras.Model):
 
         final_output = self.final_layer(dec_output)  # (batch_size, tar_seq_len, target_vocab_size)
 
-        return final_output, attention_weights
+        return final_output, attention_weights, 0.  # 0. is for KL loss.
+
+        # kl_weights = tf.minimum(tf.to_float(self.global_step) / 20000, 1.0) # simple KL annealing schedule.
 
     def create_masks(self, inp, tar):
         # Encoder padding mask
@@ -53,18 +56,20 @@ class Transformer(tf.keras.Model):
 class VAETransformer(Transformer):
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
                  target_vocab_size, pe_input, pe_target, rate=0.1, latent="attention"):
-        super(VAETransformer, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff, input_vocab_size=input_vocab_size,
-                 target_vocab_size=target_vocab_size, pe_input=pe_input, pe_target=pe_target, rate=rate)
+        super(VAETransformer, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
+                                             input_vocab_size=input_vocab_size,
+                                             target_vocab_size=target_vocab_size, pe_input=pe_input,
+                                             pe_target=pe_target, rate=rate)
 
         self.encoder = VAEEncoder(num_layers, d_model, num_heads, dff,
-                               input_vocab_size, pe_input, rate)
+                                  input_vocab_size, pe_input, rate)
 
         self.decoder = VAEDecoder(num_layers, d_model, num_heads, dff,
-                               target_vocab_size, pe_target, rate, latent=latent)
+                                  target_vocab_size, pe_target, rate, latent=latent)
 
-        self.prior_net = tf.keras.layers.Dense(2*d_model)
-        self.posterior_net = tf.keras.layers.Dense(2*d_model)
-        #self.combination_layer = tf.keras.layers.Dense(d_model)
+        self.prior_net = tf.keras.layers.Dense(2 * d_model)
+        self.posterior_net = tf.keras.layers.Dense(2 * d_model)
+        # self.combination_layer = tf.keras.layers.Dense(d_model)
 
     def encode_prior(self, x):
         mean, logvar = tf.split(self.prior_net(x), num_or_size_splits=2, axis=-1)
@@ -83,8 +88,14 @@ class VAETransformer(Transformer):
         # z: shape of (batch size, d_model)
         out_ = self.final_layer(x)
         p_z = self.final_layer(z)
-        p_z = tf.tile(p_z, multiples=[1,out_.shape[1], 1])
+        p_z = tf.tile(p_z, multiples=[1, out_.shape[1], 1])
         return out_ + p_z
+
+    def compute_kl(self, prior_mean, prior_logvar, recog_mean, recog_logvar):
+        kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
+                                        - tf.math.divide(tf.pow(prior_mean - recog_mean, 2), tf.exp(prior_logvar))
+                                        - tf.math.divide(tf.exp(recog_logvar), tf.exp(prior_logvar)), axis=-1)
+        return tf.reduce_mean(kld)
 
     def call(self, inputs, training):
         # Keras models prefer if you pass all your inputs in the first argument
@@ -93,11 +104,20 @@ class VAETransformer(Transformer):
             encoder_input = tf.concat([inp, tar], axis=1)
         else:
             encoder_input = inp
-        enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input, tar)
+        enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input,
+                                                                                tar)  # TODO: problem here for latent = "attention". The decoding padding mask should include one more timestep for the latent.
 
-        enc_output = self.encoder(encoder_input, training, enc_padding_mask)  # (batch_size, inp_seq_len, d_model) #TODO: do we need an enc_padding mask ?
+        enc_output = self.encoder(encoder_input, training,
+                                  enc_padding_mask)  # (batch_size, inp_seq_len, d_model) #TODO: do we need an enc_padding mask ?
 
-        mean, logvar = self.encode_posterior(enc_output) if training else self.encode_prior(enc_output)
+        # compute mean, logvar from prior and posterior
+        recog_mean, recog_logvar = self.encode_posterior(enc_output)
+        prior_mean, prior_logvar = self.encode_prior(enc_output)
+        # compute kl
+        kl = self.compute_kl(prior_mean, prior_logvar, recog_mean, recog_logvar)
+        # derive latent z from mean and logvar
+        mean = recog_mean if training else prior_mean
+        logvar = recog_logvar if training else prior_logvar
         z = self.reparameterize(mean, logvar)
 
         # dec_output.shape == (batch_size, tar_seq_len, d_model)
@@ -109,7 +129,7 @@ class VAETransformer(Transformer):
         else:
             final_output = self.final_layer(dec_output)  # (batch_size, tar_seq_len, target_vocab_size)
 
-        return final_output, attention_weights
+        return final_output, attention_weights, kl
 
 
 if __name__ == '__main__':
@@ -121,16 +141,17 @@ if __name__ == '__main__':
     temp_input = tf.random.uniform((64, 38), dtype=tf.int64, minval=0, maxval=200)
     temp_target = tf.random.uniform((64, 36), dtype=tf.int64, minval=0, maxval=200)
 
-    fn_out, _ = sample_transformer((temp_input, temp_target), training=True)
+    fn_out, _, _ = sample_transformer((temp_input, temp_target), training=True)
 
     print(fn_out.shape)  # (batch_size, tar_seq_len, target_vocab_size)
 
     # -------------------------------------- VAE Transformer ----------------------------------------------------------------------------------
 
     sample_vae_transformer = VAETransformer(
-        num_layers=2, d_model=64, num_heads=8, dff=256,
+        num_layers=2, d_model=32, num_heads=8, dff=128,
         input_vocab_size=8500, target_vocab_size=8000,
         pe_input=10000, pe_target=6000, latent="input")
 
-    vae_out, _ = sample_vae_transformer((temp_input, temp_target), training=True)
+    vae_out, _, kl_loss = sample_vae_transformer((temp_input, temp_target), training=True)
+    print(kl_loss)
     print(vae_out.shape)

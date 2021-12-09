@@ -1,13 +1,17 @@
 import tensorflow as tf
 import pandas as pd
+import time
 
 
-def inference(transformer, test_dataset, start_token, max_len=21, decoding="sampling", temp=1):
+def inference(transformer, test_dataset, start_token, max_len=21, decoding="sampling", temp=1, test_samples=-1, logger=None):
+    start_time = time.time()
     all_preds, all_targets, all_inputs = [], [], []
-    for (inputs, targets) in test_dataset:
+    if test_samples is None:
+        test_samples = -1
+    for (inputs, targets) in test_dataset.take(test_samples):
         tar_inp = tf.constant([start_token], shape=(inputs.shape[0], 1), dtype=tf.int32)
         for i in range(max_len):
-            predictions, _ = transformer((inputs, tar_inp),
+            predictions, _, _ = transformer((inputs, tar_inp),
                                          False)
             last_pred = predictions[:, -1]
             if decoding == "sampling":
@@ -22,6 +26,8 @@ def inference(transformer, test_dataset, start_token, max_len=21, decoding="samp
     all_preds = tf.stack(all_preds, axis=0)
     all_targets = tf.stack(all_targets, axis=0)
     all_inputs = tf.stack(all_inputs, axis=0)
+    if logger is not None:
+        logger.info("TIME FOR INFERENCE:{}".format(time.time() - start_time))
     return tf.reshape(all_inputs, shape=(-1, all_inputs.shape[-1])), tf.reshape(all_targets, shape=(-1, all_targets.shape[-1])), tf.reshape(all_preds, shape=(
     -1, all_preds.shape[-1]))
 
@@ -43,7 +49,7 @@ if __name__ == '__main__':
     start_token = dataset.vocab["<SOS>"]
 
     inputs, targets, preds = inference(transformer=transformer, test_dataset=test_dataset, start_token=start_token,
-                                       max_len=10)
+                                       max_len=10, test_samples=-1)
     print(preds.shape)
     print(targets.shape)
 

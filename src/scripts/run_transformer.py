@@ -12,20 +12,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import json
+import h5py
 
 
 def get_parser():
     parser = argparse.ArgumentParser()
     # data parameters:
     # parser.add_argument("-data_path", type=str, required=True, help="path for uploading the dataset")
-    parser.add_argument("-max_samples", type=int, default=500, help="max samples for train dataset")
+    parser.add_argument("-max_samples", type=int, help="max samples for train dataset")
     # model parameters:
     parser.add_argument("-num_layers", type=int, default=1,
                         help="number of layers in the network. If == 0, corresponds to adding GPT2Decoder.")
     parser.add_argument("-num_heads", type=int, default=1, help="number of attention heads for Transformer networks")
     parser.add_argument("-d_model", type=int, default=8, help="depth of attention parameters")
     parser.add_argument("-dff", type=int, default=8, help="dimension of feed-forward network")
-    parser.add_argument("-pe", type=int, default=50, help="maximum positional encoding")
+    parser.add_argument("-pe", type=int, default=1000, help="maximum positional encoding")
     parser.add_argument("-p_drop", type=float, default=0.1, help="dropout on output layer")
     # training params.
     parser.add_argument("-bs", type=int, default=32, help="batch size")
@@ -58,6 +59,13 @@ def create_logger(out_path):
     # add ch to logger
     logger.addHandler(ch)
     return logger
+
+def create_tensorboard_writer(out_path):
+    train_log_dir = os.path.join(out_path, 'logs', 'train')
+    val_log_dir = os.path.join(out_path, 'logs', 'val')
+    train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+    val_summary_writer = tf.summary.create_file_writer(val_log_dir)
+    return train_summary_writer, val_summary_writer
 
 
 def save_hparams(args, out_path):
@@ -132,7 +140,8 @@ def run(args):
     ckpt_manager = get_checkpoints(transformer, optimizer, checkpoint_path)
     results = train(EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset, transformer=transformer,
                     optimizer=optimizer, loss_object=loss_object, ckpt_manager=ckpt_manager, logger=logger)
-
+    results["train_ppl"] = np.exp(results["train_loss"])
+    results["val_ppl"] = np.exp(results["val_loss"])
     # save results
     df_results = pd.DataFrame.from_records(results)
     df_results.to_csv(os.path.join(out_path, "train_history.csv"))
@@ -141,16 +150,17 @@ def run(args):
 
     # generate text at inference
     start_token = dataset.vocab["<SOS>"]
-    inputs, targets, preds = inference(transformer=transformer, test_dataset=test_dataset, start_token=start_token, temp=args.temp)
-    print(inputs.shape)
-    print(targets.shape)
-    print(preds.shape)
+    inputs, targets, preds = inference(transformer=transformer, test_dataset=test_dataset, start_token=start_token, temp=args.temp, test_samples=args.test_samples, logger=logger)
     inference_path = os.path.join(out_path, "inference")
     if not os.path.isdir(inference_path):
         os.makedirs(inference_path)
-    for (path, arr) in zip([os.path.join(inference_path, "inputs.npy"), os.path.join(inference_path, "targets.npy"),
-                            os.path.join(inference_path, "preds.npy")], [inputs, targets, preds]):
-        np.save(path, arr)
+    with h5py.File(os.path.join(inference_path, "inference.h5"), 'w') as f:
+        f.create_dataset('inputs', data=inputs)
+        f.create_dataset('targets', data=targets)
+        f.create_dataset('preds', data=preds)
+    # for (path, arr) in zip([os.path.join(inference_path, "inputs.npy"), os.path.join(inference_path, "targets.npy"),
+    #                         os.path.join(inference_path, "preds.npy")], [inputs, targets, preds]):
+    #     np.save(path, arr)
     text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())

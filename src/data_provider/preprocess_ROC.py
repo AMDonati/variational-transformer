@@ -3,8 +3,6 @@ import numpy as np
 from nltk import word_tokenize
 import pandas as pd
 import re
-import h5py
-
 
 
 def load_data(data_path):
@@ -30,9 +28,6 @@ def split_train_test(sentences, val_size=5000, test_size=5000):
     paths = ["data/ROC/train_set.pkl", "data/ROC/val_set.pkl", "data/ROC/test_set.pkl"]
     for df, path in zip([train_sentences, val_sentences, test_sentences], paths):
         df.to_pickle(path)
-        # with h5py.File(path, 'w') as f:
-        #     f.create_dataset('inputs', data=df.sentence1.values)
-        #     f.create_dataset('targets', data=df.sentence2.values)
     print("saving dataset splits in pkl files...")
     return train_sentences, val_sentences, test_sentences
 
@@ -48,25 +43,6 @@ def tokenize(sentences, vocab):
     pad_func = lambda t: t + [0] * (max_len - len(t))
     padded_sentences = tokens_id.apply(pad_func)
     return padded_sentences, len_sentences
-
-# def tokenize(sentences, vocab, max_len=20):
-#     tokenize_func = lambda t: word_tokenize(t)
-#     tok_to_id_func = lambda t: [vocab[w] for w in t if w in vocab.keys()]
-#     tokenized_sentences = sentences.apply(tokenize_func)
-#     tokens_id = tokenized_sentences.apply(tok_to_id_func)
-#     df = pd.DataFrame()
-#     df["input_sentence"] = tokens_id.apply(lambda t: t[:-1])
-#     df["target_sentence"] = tokens_id.apply(lambda t: t[1:])
-#     len_sentences = tokens_id.apply(len)
-#     # filtering sentence of length max_len max.
-#     df = df[len_sentences <= (max_len + 1)]
-#     len_sentences_ = len_sentences[len_sentences <= (max_len + 1)]
-#     pad_func = lambda t: t + [0] * (max_len - len(t))
-#     df["input_sentence"] = df.input_sentence.apply(pad_func)
-#     df["target_sentence"] = df.target_sentence.apply(pad_func)
-#     df["attention_mask"] = len_sentences_.apply(lambda t: [1] * (t - 1) + [0] * (max_len - (t - 1)))
-#     print("max len", max_len)
-#     return df, len_sentences
 
 # def encode(lang1, lang2):
 #     lang1 = [tokenizer_pt.vocab_size] + tokenizer_pt.encode(

@@ -33,11 +33,6 @@ class ROCDataset:
         if self.max_samples is not None:
             input_sentence = input_sentence[:self.max_samples]
             target_sentence = target_sentence[:self.max_samples]
-        # hf = h5py.File(self.data_path, 'r')
-        # input_questions = hf.get('input_questions')
-        # input_questions = np.array(input_questions, dtype=np.int32)
-        # target_questions = hf.get('target_questions')
-        # target_questions = np.array(target_questions, dtype=np.int32)
         return input_sentence, target_sentence
 
     def get_datasets(self):
