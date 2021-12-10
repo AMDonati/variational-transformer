@@ -102,6 +102,8 @@ def create_out_path(args):
                                                                args.pe,
                                                                args.bs,
                                                                args.p_drop)
+        if args.model == "VAE":
+            out_file = out_file + "_{}".format(args.latent)
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
         if not os.path.isdir(output_folder):

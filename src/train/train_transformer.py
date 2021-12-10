@@ -74,7 +74,8 @@ def eval_step_vae(inp, tar, transformer, loss_object, global_step):
     return (loss, ce_loss, kl_loss), accuracy
 
 
-def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None, train_writer=None, val_writer=None):
+def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None,
+          train_writer=None, val_writer=None):
     metrics = dict.fromkeys(["train_loss", "val_loss", "train_accuracy", "val_accuracy"])
     for key in metrics.keys():
         metrics[key] = []
@@ -89,32 +90,37 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
             loss_epoch += loss_batch
             accuracy_epoch += accuracy_batch
 
-        for (batch, (inp, tar)) in enumerate(val_dataset):
+        for key, val in zip(["train_loss", "train_accuracy"], [loss_epoch, accuracy_epoch]):
+            metrics[key].append((val / (batch + 1)).numpy())
+
+        for (batch_val, (inp, tar)) in enumerate(val_dataset):
             loss_batch, accuracy_batch = eval_step(inp, tar, transformer, loss_object)
             val_loss_epoch += loss_batch
             val_accuracy_epoch += accuracy_batch
 
-        ckpt_save_path = ckpt_manager.save()
+        for key, val in zip(["val_loss", "val_accuracy"], [val_loss_epoch, val_accuracy_epoch]):
+            metrics[key].append((val / (batch_val + 1)).numpy())
 
-        for key, val in zip(metrics.keys(), [loss_epoch, val_loss_epoch, accuracy_epoch, val_accuracy_epoch]):
-            metrics[key].append((val / (batch + 1)).numpy())
+        ckpt_save_path = ckpt_manager.save()
 
         print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
         if logger is None:
             print('Epoch: {}'.format(epoch + 1))
-            print('Train Loss: {:.4f}, Train Accuracy {:.4f}'.format(loss_epoch / (batch + 1),
-                                                                     accuracy_epoch / (batch + 1)))
-            print(
-                'Val Loss: {:.4f}, Val Accuracy {:.4f}'.format(val_loss_epoch / (batch + 1),
-                                                               val_accuracy_epoch / (batch + 1)))
+            print('Train Loss: {:.4f}, Train Accuracy {:.4f}'.format(metrics["train_loss"][-1],
+                                                                     metrics["train_accuracy"][-1]
+                                                                     ))
+            print('Val Loss: {:.4f}, Val Accuracy {:.4f}'.format(metrics["val_loss"][-1],
+                                                                     metrics["val_accuracy"][-1]
+                                                                     ))
             print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
         else:
             logger.info('-' * 40 + 'Epoch: {}'.format(epoch + 1) + '-' * 40)
-            logger.info('Train Loss: {:.4f}, Train Accuracy {:.4f}'.format(loss_epoch / (batch + 1),
-                                                                           accuracy_epoch / (batch + 1)))
-            logger.info(
-                'Val Loss: {:.4f}, Val Accuracy {:.4f}'.format(val_loss_epoch / (batch + 1),
-                                                               val_accuracy_epoch / (batch + 1)))
+            logger.info('Train Loss: {:.4f}, Train Accuracy {:.4f}'.format(metrics["train_loss"][-1],
+                                                                     metrics["train_accuracy"][-1]
+                                                                     ))
+            logger.info('Val Loss: {:.4f}, Val Accuracy {:.4f}'.format(metrics["val_loss"][-1],
+                                                                 metrics["val_accuracy"][-1]
+                                                                 ))
             logger.info('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
     return metrics
@@ -148,7 +154,12 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             accuracy_epoch += accuracy_batch
             global_step += 1
 
-        for (batch, (inp, tar)) in enumerate(val_dataset):
+        for key, val in zip(["train_loss", "train_ce_loss", "train_kl_loss", "train_accuracy"],
+                            [loss_epoch, ce_loss_epoch, kl_loss_epoch,
+                             accuracy_epoch]):
+            metrics[key].append((val / (batch + 1)).numpy())
+
+        for (batch_val, (inp, tar)) in enumerate(val_dataset):
             (val_loss, val_ce_loss, val_kl_loss), val_accuracy = eval_step_vae(inp, tar, transformer, loss_object,
                                                                                global_step)
             if val_writer is not None:
@@ -158,6 +169,11 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             val_ce_loss_epoch += val_ce_loss
             val_kl_loss_epoch += val_kl_loss
             val_accuracy_epoch += val_accuracy
+
+        for key, val in zip(["val_loss", "val_ce_loss", "val_kl_loss", "val_accuracy"],
+                            [val_loss_epoch, val_ce_loss_epoch, val_kl_loss_epoch,
+                             val_accuracy_epoch]):
+            metrics[key].append((val / (batch_val + 1)).numpy())
 
         ckpt_save_path = ckpt_manager.save()
 

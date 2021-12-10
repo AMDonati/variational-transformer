@@ -24,6 +24,5 @@ D_MODEL=128
 DFF=512
 BS=32
 EP=30
-TEST_SAMPLES=15
 
-srun python -u src/scripts/run_transformer.py -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH -test_samples $TEST_SAMPLES
+srun python -u src/scripts/run_transformer.py -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH
