@@ -69,7 +69,7 @@ class VAEEncoder(Encoder):
                                          input_vocab_size=input_vocab_size,
                                          maximum_position_encoding=maximum_position_encoding, rate=rate)
         self.average_attention = MultiHeadAttention(d_model, num_heads)
-        self.learnable_query = tf.Variable(initial_value=tf.random.normal(shape=(1, 1, d_model)), shape=tf.TensorShape(None))
+        self.learnable_query = tf.Variable(initial_value=tf.random.normal(shape=(1, 1, d_model)), name="learnable_query")
 
     def call(self, x, training, mask):
         seq_len = tf.shape(x)[1]

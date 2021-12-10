@@ -33,7 +33,7 @@ def inference(transformer, test_dataset, start_token, max_len=21, decoding="samp
 
 
 if __name__ == '__main__':
-    from src.models.transformer import Transformer
+    from src.models.transformer import Transformer, VAETransformer
     from src.data_provider.ROCDataset import ROCDataset
 
     # Load Dataset
@@ -56,4 +56,27 @@ if __name__ == '__main__':
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())
     text_df = pd.DataFrame.from_records(dict(zip(["targets", "preds"], [text_targets, text_preds])))
-    print("done")
+    print("done for baseline Transformer")
+
+    print("------------------------------------------- evaluating VAE Transformer-------------------------------------------------")
+
+    # evaluating on VAE Transformer
+    vae_transformer = VAETransformer(
+        num_layers=2, d_model=32, num_heads=8, dff=128,
+        input_vocab_size=len(dataset.vocab), target_vocab_size=len(dataset.vocab),
+        pe_input=10000, pe_target=6000, latent="output")
+
+    start_token = dataset.vocab["<SOS>"]
+
+    inputs, targets, preds = inference(transformer=vae_transformer, test_dataset=test_dataset, start_token=start_token,
+                                       max_len=10, test_samples=5)
+
+    print(preds.shape)
+    print(targets.shape)
+
+    text_preds = dataset.tokenizer.decode_batch(preds.numpy())
+    text_targets = dataset.tokenizer.decode_batch(targets.numpy())
+    text_df = pd.DataFrame.from_records(dict(zip(["targets", "preds"], [text_targets, text_preds])))
+    print("done for VAE Transformer")
+
+

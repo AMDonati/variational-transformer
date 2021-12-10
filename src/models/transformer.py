@@ -7,7 +7,7 @@ from src.models.vae_utils import gaussian_kld
 
 class Transformer(tf.keras.Model):
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-                 target_vocab_size, pe_input, pe_target, rate=0.1):
+                 target_vocab_size, pe_input, pe_target, rate=0.1, latent="attention"):
         super(Transformer, self).__init__()
 
         self.encoder = Encoder(num_layers, d_model, num_heads, dff,
@@ -33,8 +33,6 @@ class Transformer(tf.keras.Model):
 
         return final_output, attention_weights, 0.  # 0. is for KL loss.
 
-        # kl_weights = tf.minimum(tf.to_float(self.global_step) / 20000, 1.0) # simple KL annealing schedule.
-
     def create_masks(self, inp, tar):
         # Encoder padding mask
         enc_padding_mask = create_padding_mask(inp)
@@ -55,11 +53,11 @@ class Transformer(tf.keras.Model):
 
 class VAETransformer(Transformer):
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-                 target_vocab_size, pe_input, pe_target, rate=0.1, latent="attention"):
+                 target_vocab_size, pe_input, pe_target, rate=0.1, latent="input"):
         super(VAETransformer, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                              input_vocab_size=input_vocab_size,
                                              target_vocab_size=target_vocab_size, pe_input=pe_input,
-                                             pe_target=pe_target, rate=rate)
+                                             pe_target=pe_target, rate=rate, latent=latent)
 
         self.encoder = VAEEncoder(num_layers, d_model, num_heads, dff,
                                   input_vocab_size, pe_input, rate)
@@ -67,8 +65,8 @@ class VAETransformer(Transformer):
         self.decoder = VAEDecoder(num_layers, d_model, num_heads, dff,
                                   target_vocab_size, pe_target, rate, latent=latent)
 
-        self.prior_net = tf.keras.layers.Dense(2 * d_model)
-        self.posterior_net = tf.keras.layers.Dense(2 * d_model)
+        self.prior_net = tf.keras.layers.Dense(2 * d_model, name='prior_net')
+        self.posterior_net = tf.keras.layers.Dense(2 * d_model, name='posterior_net')
         # self.combination_layer = tf.keras.layers.Dense(d_model)
 
     def encode_prior(self, x):
@@ -88,7 +86,6 @@ class VAETransformer(Transformer):
         # z: shape of (batch size, d_model)
         out_ = self.final_layer(x)
         p_z = self.final_layer(z)
-        p_z = tf.tile(p_z, multiples=[1, out_.shape[1], 1])
         return out_ + p_z
 
     def compute_kl(self, prior_mean, prior_logvar, recog_mean, recog_logvar):
@@ -150,7 +147,7 @@ if __name__ == '__main__':
     sample_vae_transformer = VAETransformer(
         num_layers=2, d_model=32, num_heads=8, dff=128,
         input_vocab_size=8500, target_vocab_size=8000,
-        pe_input=10000, pe_target=6000, latent="input")
+        pe_input=10000, pe_target=6000, latent="output")
 
     vae_out, _, kl_loss = sample_vae_transformer((temp_input, temp_target), training=True)
     print(kl_loss)

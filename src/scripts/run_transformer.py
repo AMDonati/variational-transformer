@@ -1,7 +1,7 @@
 import argparse
 from src.data_provider.ROCDataset import ROCDataset
-from src.models.transformer import Transformer
-from src.train.train_transformer import train
+from src.models.transformer import Transformer, VAETransformer
+from src.train.train_transformer import train, train_VAE
 from src.train.utils import CustomSchedule, get_checkpoints
 from src.eval.eval import inference
 import tensorflow as tf
@@ -14,6 +14,10 @@ import numpy as np
 import json
 import h5py
 
+models = {"transformer": Transformer, "VAE": VAETransformer}
+train_fn = {"transformer": train, "VAE": train_VAE}
+train_losses = {"transformer": "train_loss", "VAE": "train_ce_loss"} # to compute ppl.
+val_losses = {"transformer": "val_loss", "VAE": "val_ce_loss"}
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -21,13 +25,16 @@ def get_parser():
     # parser.add_argument("-data_path", type=str, required=True, help="path for uploading the dataset")
     parser.add_argument("-max_samples", type=int, help="max samples for train dataset")
     # model parameters:
+    parser.add_argument("-model", type=str, default="transformer", help="model: transformer or VAE for now.")
     parser.add_argument("-num_layers", type=int, default=1,
-                        help="number of layers in the network. If == 0, corresponds to adding GPT2Decoder.")
+                        help="number of layers in the network.")
     parser.add_argument("-num_heads", type=int, default=1, help="number of attention heads for Transformer networks")
     parser.add_argument("-d_model", type=int, default=8, help="depth of attention parameters")
     parser.add_argument("-dff", type=int, default=8, help="dimension of feed-forward network")
     parser.add_argument("-pe", type=int, default=1000, help="maximum positional encoding")
     parser.add_argument("-p_drop", type=float, default=0.1, help="dropout on output layer")
+    # VAE Transformer params:
+    parser.add_argument("-latent", type=str, default="input", help="where to inject the latent in the VAE transformer")
     # training params.
     parser.add_argument("-bs", type=int, default=32, help="batch size")
     parser.add_argument("-ep", type=int, default=5, help="number of epochs")
@@ -60,6 +67,7 @@ def create_logger(out_path):
     logger.addHandler(ch)
     return logger
 
+
 def create_tensorboard_writer(out_path):
     train_log_dir = os.path.join(out_path, 'logs', 'train')
     val_log_dir = os.path.join(out_path, 'logs', 'val')
@@ -90,10 +98,10 @@ def create_out_path(args):
     if args.save_path is not None:
         return args.save_path
     else:
-        out_file = 'Transformer_{}L_d{}_dff{}_pe{}_bs{}_pdrop{}'.format(args.num_layers, args.d_model, args.dff,
-                                                                        args.pe,
-                                                                        args.bs,
-                                                                        args.p_drop)
+        out_file = '{}_{}L_d{}_dff{}_pe{}_bs{}_pdrop{}'.format(args.model, args.num_layers, args.d_model, args.dff,
+                                                               args.pe,
+                                                               args.bs,
+                                                               args.p_drop)
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
         if not os.path.isdir(output_folder):
@@ -116,19 +124,19 @@ def run(args):
     out_path = create_out_path(args)
     logger = create_logger(out_path)
     save_hparams(args, out_path)
+    train_writer, val_writer = create_tensorboard_writer(out_path)
 
     # Load Dataset
     dataset = ROCDataset(data_path='data/ROC', batch_size=args.bs, max_samples=args.max_samples)
     train_data, val_data, test_data = dataset.get_datasets()
     train_dataset, val_dataset, test_dataset = dataset.data_to_dataset(train_data, val_data, test_data)
-
     vocab_size = len(dataset.vocab)
 
     # Create Transformer
-    transformer = Transformer(
+    transformer = models[args.model](
         num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, dff=args.dff,
         input_vocab_size=vocab_size, target_vocab_size=vocab_size,
-        pe_input=args.pe, pe_target=args.pe)
+        pe_input=args.pe, pe_target=args.pe, latent=args.latent)
 
     # Train Transformer
     learning_rate = CustomSchedule(args.d_model)
@@ -138,10 +146,13 @@ def run(args):
         from_logits=True, reduction='none')
     checkpoint_path = create_ckpt_path(args, out_path)
     ckpt_manager = get_checkpoints(transformer, optimizer, checkpoint_path)
-    results = train(EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset, transformer=transformer,
-                    optimizer=optimizer, loss_object=loss_object, ckpt_manager=ckpt_manager, logger=logger)
-    results["train_ppl"] = np.exp(results["train_loss"])
-    results["val_ppl"] = np.exp(results["val_loss"])
+
+    results = train_fn[args.model](EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset,
+                                   transformer=transformer,
+                                   optimizer=optimizer, loss_object=loss_object, ckpt_manager=ckpt_manager,
+                                   logger=logger, train_writer=train_writer, val_writer=val_writer)
+    results["train_ppl"] = np.exp(results[train_losses[args.model]])
+    results["val_ppl"] = np.exp(results[val_losses[args.model]])
     # save results
     df_results = pd.DataFrame.from_records(results)
     df_results.to_csv(os.path.join(out_path, "train_history.csv"))
@@ -150,7 +161,8 @@ def run(args):
 
     # generate text at inference
     start_token = dataset.vocab["<SOS>"]
-    inputs, targets, preds = inference(transformer=transformer, test_dataset=test_dataset, start_token=start_token, temp=args.temp, test_samples=args.test_samples, logger=logger)
+    inputs, targets, preds = inference(transformer=transformer, test_dataset=test_dataset, start_token=start_token,
+                                       temp=args.temp, test_samples=args.test_samples, logger=logger)
     inference_path = os.path.join(out_path, "inference")
     if not os.path.isdir(inference_path):
         os.makedirs(inference_path)
@@ -167,6 +179,7 @@ def run(args):
     text_df = pd.DataFrame.from_records(
         dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
     text_df.to_csv(os.path.join(inference_path, "texts.csv"))
+
 
 if __name__ == '__main__':
     parser = get_parser()

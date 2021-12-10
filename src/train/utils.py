@@ -50,7 +50,7 @@ def accuracy_function(real, pred):
   mask = tf.cast(mask, dtype=tf.float32)
   return tf.reduce_sum(accuracies)/tf.reduce_sum(mask)
 
-def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, global_step):
+def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, global_step, learned_q=None):
     with writer.as_default():
         tf.summary.scalar("loss", loss, step=global_step)
         tf.summary.scalar("ce_loss", ce_loss, step=global_step)
@@ -58,6 +58,8 @@ def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, g
         tf.summary.scalar("accuracy", accuracy, step=global_step)
         if kl_weights is not None:
             tf.summary.scalar("kl_weight", kl_weights, step=global_step)
+        if learned_q is not None:
+            tf.summary.scalar("learnable_qeury_dim0", learned_q, step=global_step)
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt

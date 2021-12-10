@@ -39,9 +39,9 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, global_step):
         predictions, _, kl_loss = transformer((inp, tar_inp),
                                               True)
         ce_loss = loss_function(tar_real, predictions, loss_object)
+        kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
+        loss = ce_loss + kl_weights * kl_loss
 
-    kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
-    loss = ce_loss + kl_weights * kl_loss
     gradients = tape.gradient(loss, transformer.trainable_variables)
     optimizer.apply_gradients(zip(gradients, transformer.trainable_variables))
 
@@ -68,13 +68,13 @@ def eval_step_vae(inp, tar, transformer, loss_object, global_step):
     predictions, _, kl_loss = transformer((inp, tar_inp),
                                           False)
     ce_loss = loss_function(tar_real, predictions, loss_object)
-    kl_weights = tf.minimum(tf.to_float(global_step) / 20000, 1.0)
+    kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
     loss = ce_loss + kl_weights * kl_loss
     accuracy = accuracy_function(tar_real, predictions)
     return (loss, ce_loss, kl_loss), accuracy
 
 
-def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None):
+def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None, train_writer=None, val_writer=None):
     metrics = dict.fromkeys(["train_loss", "val_loss", "train_accuracy", "val_accuracy"])
     for key in metrics.keys():
         metrics[key] = []
@@ -97,7 +97,7 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
         ckpt_save_path = ckpt_manager.save()
 
         for key, val in zip(metrics.keys(), [loss_epoch, val_loss_epoch, accuracy_epoch, val_accuracy_epoch]):
-            metrics[key].append(val / (batch + 1))
+            metrics[key].append((val / (batch + 1)).numpy())
 
         print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
         if logger is None:
@@ -120,7 +120,8 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
     return metrics
 
 
-def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None, train_writer=None, val_writer=None):
+def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None,
+              train_writer=None, val_writer=None):
     metrics = dict.fromkeys(
         ["train_loss", "val_loss", "train_ce_loss", "val_ce_loss", "train_kl_loss", "val_kl_loss", "train_accuracy",
          "val_accuracy"])
@@ -135,8 +136,12 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
         for (batch, (inp, tar)) in enumerate(train_dataset):
             (loss, ce_loss, kl_loss), accuracy_batch, kl_weights = train_step_vae(inp, tar, transformer, optimizer,
                                                                                   loss_object, global_step)
+            # get learnable_query:
+            learned_q = tf.squeeze(transformer.encoder.learnable_query[:, :, 0])
             if train_writer is not None:
-                write_to_tensorboard(writer=train_writer, loss=loss, ce_loss=ce_loss, kl_loss=kl_loss, accuracy=accuracy_batch, kl_weights=kl_weights, global_step=global_step)
+                write_to_tensorboard(writer=train_writer, loss=loss, ce_loss=ce_loss, kl_loss=kl_loss,
+                                     accuracy=accuracy_batch, kl_weights=kl_weights, global_step=global_step,
+                                     learned_q=learned_q)
             loss_epoch += loss
             ce_loss_epoch += ce_loss
             kl_loss_epoch += kl_loss
@@ -147,7 +152,8 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             (val_loss, val_ce_loss, val_kl_loss), val_accuracy = eval_step_vae(inp, tar, transformer, loss_object,
                                                                                global_step)
             if val_writer is not None:
-                write_to_tensorboard(writer=val_writer, loss=val_loss, ce_loss=val_ce_loss, kl_loss=val_kl_loss, accuracy=val_accuracy, kl_weights=None, global_step=global_step)
+                write_to_tensorboard(writer=val_writer, loss=val_loss, ce_loss=val_ce_loss, kl_loss=val_kl_loss,
+                                     accuracy=val_accuracy, kl_weights=None, global_step=global_step, learned_q=None)
             val_loss_epoch += val_loss
             val_ce_loss_epoch += val_ce_loss
             val_kl_loss_epoch += val_kl_loss
@@ -158,7 +164,7 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
         for key, val in zip(metrics.keys(),
                             [loss_epoch, val_loss_epoch, ce_loss_epoch, val_ce_loss_epoch, kl_loss_epoch,
                              val_kl_loss_epoch, accuracy_epoch, val_accuracy_epoch]):
-            metrics[key].append(val / (batch + 1))
+            metrics[key].append((val / (batch + 1)).numpy())
 
         print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
         if logger is None:
@@ -169,31 +175,33 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
                                                                                             metrics["train_accuracy"][
                                                                                                 -1]))
             print('Val Loss: {:.4f}, Val CE loss: {:.4f}, Val Accuracy {:.4f}'.format(metrics["val_loss"][-1],
-                                                                                            metrics["val_ce_loss"][
-                                                                                                -1],
-                                                                                            metrics["val_accuracy"][
-                                                                                                -1]))
-            print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
-        else:
-            logger.info('-' * 40 + 'Epoch: {}'.format(epoch + 1) + '-' * 40)
-            logger.info('Train Loss: {:.4f}, Train CE loss: {:.4f}, Train Accuracy {:.4f}'.format(metrics["train_loss"][-1],
-                                                                                            metrics["train_ce_loss"][
-                                                                                                -1],
-                                                                                            metrics["train_accuracy"][
-                                                                                                -1]))
-            logger.info('Val Loss: {:.4f}, Val CE loss: {:.4f}, Val Accuracy {:.4f}'.format(metrics["val_loss"][-1],
                                                                                       metrics["val_ce_loss"][
                                                                                           -1],
                                                                                       metrics["val_accuracy"][
                                                                                           -1]))
+            print('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
+        else:
+            logger.info('-' * 40 + 'Epoch: {}'.format(epoch + 1) + '-' * 40)
+            logger.info(
+                'Train Loss: {:.4f}, Train CE loss: {:.4f}, Train Accuracy {:.4f}'.format(metrics["train_loss"][-1],
+                                                                                          metrics["train_ce_loss"][
+                                                                                              -1],
+                                                                                          metrics["train_accuracy"][
+                                                                                              -1]))
+            logger.info('Val Loss: {:.4f}, Val CE loss: {:.4f}, Val Accuracy {:.4f}'.format(metrics["val_loss"][-1],
+                                                                                            metrics["val_ce_loss"][
+                                                                                                -1],
+                                                                                            metrics["val_accuracy"][
+                                                                                                -1]))
             logger.info('Time taken for 1 epoch: {} secs\n'.format(time.time() - start))
 
     return metrics
 
+
 if __name__ == '__main__':
     d_model = 32
     learning_rate = CustomSchedule(d_model)
-    EPOCHS = 5
+    EPOCHS = 2
     batch_size = 16
     optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
                                          epsilon=1e-9)
@@ -222,9 +230,19 @@ if __name__ == '__main__':
     vae_transformer = VAETransformer(
         num_layers=2, d_model=32, num_heads=8, dff=128,
         input_vocab_size=2500, target_vocab_size=2000,
-        pe_input=10000, pe_target=6000, latent="output")
+        pe_input=10000, pe_target=6000, latent="input")
 
-    vae_results = train_VAE(EPOCHS=EPOCHS, train_dataset=tfdataloader, val_dataset=tfdataloader, ckpt_manager=ckpt_manager,
-                    transformer=vae_transformer, optimizer=optimizer, loss_object=loss_object)
+    optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
+                                         epsilon=1e-9)
+    loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
+        from_logits=True, reduction='none')
 
+    checkpoint_path = "output/temp/train/checkpoints"
 
+    ckpt_manager = get_checkpoints(vae_transformer, optimizer, checkpoint_path)
+
+    vae_results = train_VAE(EPOCHS=EPOCHS, train_dataset=tfdataloader, val_dataset=tfdataloader,
+                            ckpt_manager=ckpt_manager,
+                            transformer=vae_transformer, optimizer=optimizer, loss_object=loss_object)
+
+    print("done for VAE Transformer")
