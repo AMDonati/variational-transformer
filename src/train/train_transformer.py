@@ -177,11 +177,6 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
 
         ckpt_save_path = ckpt_manager.save()
 
-        for key, val in zip(metrics.keys(),
-                            [loss_epoch, val_loss_epoch, ce_loss_epoch, val_ce_loss_epoch, kl_loss_epoch,
-                             val_kl_loss_epoch, accuracy_epoch, val_accuracy_epoch]):
-            metrics[key].append((val / (batch + 1)).numpy())
-
         print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
         if logger is None:
             print('Epoch: {}'.format(epoch + 1))
