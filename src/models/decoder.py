@@ -1,6 +1,6 @@
 import tensorflow as tf
 from src.models.transformer_utils import positional_encoding, point_wise_feed_forward_network
-from src.models.self_attention import MultiHeadAttention
+from src.models.self_attention import MultiHeadAttention, PseudoSelfAttention
 
 
 class DecoderLayer(tf.keras.layers.Layer):
@@ -77,10 +77,13 @@ class Decoder(tf.keras.layers.Layer):
 
 
 class VAEDecoderLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model, num_heads, dff, rate=0.1):
+    def __init__(self, d_model, num_heads, dff, rate=0.1, latent="input"):
         super(VAEDecoderLayer, self).__init__()
 
-        self.mha = MultiHeadAttention(d_model, num_heads)
+        if latent == "attention":
+            self.mha = PseudoSelfAttention(d_model, num_heads)
+        else:
+            self.mha = MultiHeadAttention(d_model, num_heads)
         self.ffn = point_wise_feed_forward_network(d_model, dff)
 
         self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
@@ -89,8 +92,8 @@ class VAEDecoderLayer(tf.keras.layers.Layer):
         self.dropout1 = tf.keras.layers.Dropout(rate)
         self.dropout2 = tf.keras.layers.Dropout(rate)
 
-    def call(self, query, keys, values, training, mask):
-        attn_output, attention_weights_block = self.mha(q=query, k=keys, v=values,  mask=mask)  # (batch_size, input_seq_len, d_model)
+    def call(self, query, keys, values, training, mask, z=None):
+        attn_output, attention_weights_block = self.mha(q=query, k=keys, v=values,  mask=mask, z=z)  # (batch_size, input_seq_len, d_model)
         attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(query + attn_output)  # (batch_size, input_seq_len, d_model)
 
@@ -106,9 +109,13 @@ class VAEDecoder(Decoder):
         super(VAEDecoder, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff, target_vocab_size=target_vocab_size,
                  maximum_position_encoding=maximum_position_encoding, rate=0.1)
 
-        self.dec_layers = [VAEDecoderLayer(d_model, num_heads, dff, rate)
+        self.dec_layers = [VAEDecoderLayer(d_model, num_heads, dff, rate, latent=latent)
                            for _ in range(num_layers)]
         self.latent = latent
+        if self.latent == "input":
+            self.input_proj = tf.keras.layers.Dense(d_model, use_bias=False)
+        if self.latent == "attention":
+            self.attn_proj = tf.keras.layers.Dense(d_model*num_layers, use_bias=False)
 
     def pseudo_self_attention(self, x, z):
         # x: shape (batch_size, tar_seq_len, d_model)
@@ -127,20 +134,20 @@ class VAEDecoder(Decoder):
         x += self.pos_encoding[:, :seq_len, :]
 
         if self.latent == "input":
-            x = x + z
+            x = x + self.input_proj(z)
 
         x = self.dropout(x, training=training)
 
+        if self.latent == "attention":
+            z = tf.split(self.attn_proj(z), num_or_size_splits=self.num_layers, axis=-1)
 
         for i in range(self.num_layers):
             if self.latent == "attention":
-                keys = self.pseudo_self_attention(x, z) # shape (B, S+1, d_model)
-                values = self.pseudo_self_attention(x, z) # shape (B, S+1, d_model)
-            else:
-                keys = x
-                values = x
+                z_i = z[i]
+                x, block = self.dec_layers[i](query=x, keys=x, values=x, z=z_i, training=training, mask=look_ahead_mask)
 
-            x, block = self.dec_layers[i](query=x, keys=keys, values=values, training=training, mask=look_ahead_mask)
+            else:
+                x, block = self.dec_layers[i](query=x, keys=x, values=x, training=training, mask=look_ahead_mask)
 
             attention_weights['decoder_layer{}'.format(i + 1)] = block
 

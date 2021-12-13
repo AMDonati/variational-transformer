@@ -31,3 +31,17 @@ def gaussian_kld(recog_mu, recog_logvar, prior_mu, prior_logvar):
                                     - tf.math.divide(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
                                     - tf.math.divide(tf.exp(recog_logvar), tf.exp(prior_logvar)), axis=1)
     return kld
+
+
+# for latent = output:
+# class LM_head_rep(nn.Module):
+#     def __init__(self, in_dim=768, out_dim=50257):
+#         super().__init__()
+#
+#         self.Nu_fc1 = nn.Linear(in_dim, 1024)
+#         self.Nu_fc2 = nn.Linear(1024, out_dim)
+#
+#     def forward(self, z):
+#         z = F.leaky_relu(self.Nu_fc1(z))
+#         z = self.Nu_fc2(z)
+#         return z

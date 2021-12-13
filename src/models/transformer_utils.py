@@ -28,8 +28,8 @@ def create_padding_mask(seq):
     # to the attention logits.
     return seq[:, tf.newaxis, tf.newaxis, :]  # (batch_size, 1, 1, seq_len)
 
-def create_look_ahead_mask(size):
-    mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+def create_look_ahead_mask(size1, size2):
+    mask = 1 - tf.linalg.band_part(tf.ones((size1, size2)), -1, 0)
     return mask  # (seq_len, seq_len)
 
 def create_masks(inp, tar):
@@ -49,11 +49,13 @@ def create_masks(inp, tar):
 
     return enc_padding_mask, combined_mask, dec_padding_mask
 
+
 def point_wise_feed_forward_network(d_model, dff):
-  return tf.keras.Sequential([
-      tf.keras.layers.Dense(dff, activation='relu'),  # (batch_size, seq_len, dff)
-      tf.keras.layers.Dense(d_model)  # (batch_size, seq_len, d_model)
-  ])
+    return tf.keras.Sequential([
+        tf.keras.layers.Dense(dff, activation='relu'),  # (batch_size, seq_len, dff)
+        tf.keras.layers.Dense(d_model)  # (batch_size, seq_len, d_model)
+    ])
+
 
 
 
@@ -66,3 +68,7 @@ if __name__ == "__main__":
     d_model = 64
     inputs = tf.random.uniform(shape=(b, S, d_model))
     pos_enc = positional_encoding(position=pe_target, d_model=d_model)
+
+    # test of look_ahead mask:
+    mask = create_look_ahead_mask(36, 37)
+    print("done")

@@ -1,8 +1,7 @@
 import tensorflow as tf
 from src.models.encoder import Encoder, VAEEncoder
 from src.models.decoder import Decoder, VAEDecoder
-from src.models.transformer_utils import create_look_ahead_mask, create_padding_mask
-from src.models.vae_utils import gaussian_kld
+from src.models.transformer_utils import create_look_ahead_mask, create_padding_mask, point_wise_feed_forward_network
 
 
 class Transformer(tf.keras.Model):
@@ -33,7 +32,7 @@ class Transformer(tf.keras.Model):
 
         return final_output, attention_weights, 0.  # 0. is for KL loss.
 
-    def create_masks(self, inp, tar):
+    def create_masks(self, inp, tar, size1=None, size2=None):
         # Encoder padding mask
         enc_padding_mask = create_padding_mask(inp)
 
@@ -44,7 +43,11 @@ class Transformer(tf.keras.Model):
         # Used in the 1st attention block in the decoder.
         # It is used to pad and mask future tokens in the input received by
         # the decoder.
-        look_ahead_mask = create_look_ahead_mask(tf.shape(tar)[1])
+        if size1 is None or size2 is None:
+            look_ahead_mask = create_look_ahead_mask(tf.shape(tar)[1], tf.shape(tar)[1])
+        else:
+            look_ahead_mask = create_look_ahead_mask(size1, size2)
+
         dec_target_padding_mask = create_padding_mask(tar)
         look_ahead_mask = tf.maximum(dec_target_padding_mask, look_ahead_mask)
 
@@ -69,6 +72,13 @@ class VAETransformer(Transformer):
         self.posterior_net = tf.keras.layers.Dense(2 * d_model, name='posterior_net')
         # self.combination_layer = tf.keras.layers.Dense(d_model)
 
+        if self.decoder.latent == "output":
+            self.output_proj = tf.keras.Sequential([
+                tf.keras.layers.Dense(dff),  # (batch_size, seq_len, dff)
+                tf.keras.layers.LeakyReLU(),
+                tf.keras.layers.Dense(target_vocab_size)  # (batch_size, seq_len, d_model)
+            ])
+
     def encode_prior(self, x):
         mean, logvar = tf.split(self.prior_net(x), num_or_size_splits=2, axis=-1)
         return mean, logvar
@@ -81,12 +91,12 @@ class VAETransformer(Transformer):
         eps = tf.random.normal(shape=mean.shape)
         return eps * tf.exp(logvar * .5) + mean
 
-    def combination_layer(self, x, z):
-        # x: shape of (batch_size, tar_seq_len, d_model)
-        # z: shape of (batch size, d_model)
-        out_ = self.final_layer(x)
-        p_z = self.final_layer(z)
-        return out_ + p_z
+    # def combination_layer(self, x, z):
+    #     # x: shape of (batch_size, tar_seq_len, d_model)
+    #     # z: shape of (batch size, d_model)
+    #     out_ = self.final_layer(x)
+    #     p_z = self.final_layer(z)
+    #     return out_ + p_z
 
     def compute_kl(self, prior_mean, prior_logvar, recog_mean, recog_logvar):
         kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
@@ -101,8 +111,17 @@ class VAETransformer(Transformer):
             encoder_input = tf.concat([inp, tar], axis=1)
         else:
             encoder_input = inp
-        enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input,
-                                                                                tar)  # TODO: problem here for latent = "attention". The decoding padding mask should include one more timestep for the latent.
+
+        if self.decoder.latent == "attention":
+            # add a dummy timestep to tar to create masks with the right length for pseudo self-attention:
+            tar_ = tf.concat([tf.ones_like(tf.expand_dims(tar[:, 0], axis=1)), tar], axis=1)
+            enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input,
+                                                                                    tar_, size1=tar.shape[1],
+                                                                                    size2=tar_.shape[1])
+        else:
+            tar_ = tar
+            enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input,
+                                                                                    tar_)  # TODO: problem here for latent = "attention". The decoding padding mask should include one more timestep for the latent.
 
         enc_output = self.encoder(encoder_input, training,
                                   enc_padding_mask)  # (batch_size, inp_seq_len, d_model) #TODO: do we need an enc_padding mask ?
@@ -122,7 +141,8 @@ class VAETransformer(Transformer):
             tar, z, training, look_ahead_mask)
 
         if self.decoder.latent == "output":
-            final_output = self.combination_layer(dec_output, z)
+            z = self.output_proj(z)
+            final_output = self.final_layer(dec_output) + z
         else:
             final_output = self.final_layer(dec_output)  # (batch_size, tar_seq_len, target_vocab_size)
 

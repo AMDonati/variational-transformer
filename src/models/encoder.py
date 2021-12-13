@@ -68,8 +68,9 @@ class VAEEncoder(Encoder):
         super(VAEEncoder, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                          input_vocab_size=input_vocab_size,
                                          maximum_position_encoding=maximum_position_encoding, rate=rate)
-        self.average_attention = MultiHeadAttention(d_model, num_heads)
+        self.average_attention = MultiHeadAttention(d_model, num_heads=1, non_linearity=True, scale=False) # in previous work, has a gelu non linearity.
         self.learnable_query = tf.Variable(initial_value=tf.random.normal(shape=(1, 1, d_model)), name="learnable_query")
+        #nn.init.normal_(w, std=0.02): in Transformer VAE: init with a random normal.
 
     def call(self, x, training, mask):
         seq_len = tf.shape(x)[1]
