@@ -2,7 +2,7 @@ import argparse
 from src.data_provider.ROCDataset import ROCDataset
 from src.models.transformer import Transformer, VAETransformer
 from src.train.train_transformer import train, train_VAE
-from src.train.utils import CustomSchedule, get_checkpoints
+from src.train.utils import CustomSchedule, get_checkpoints, get_klweights
 from src.eval.eval import inference
 import tensorflow as tf
 import os
@@ -16,8 +16,9 @@ import h5py
 
 models = {"transformer": Transformer, "VAE": VAETransformer}
 train_fn = {"transformer": train, "VAE": train_VAE}
-train_losses = {"transformer": "train_loss", "VAE": "train_ce_loss"} # to compute ppl.
+train_losses = {"transformer": "train_loss", "VAE": "train_ce_loss"}  # to compute ppl.
 val_losses = {"transformer": "val_loss", "VAE": "val_ce_loss"}
+
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -35,6 +36,9 @@ def get_parser():
     parser.add_argument("-p_drop", type=float, default=0.1, help="dropout on output layer")
     # VAE Transformer params:
     parser.add_argument("-latent", type=str, default="input", help="where to inject the latent in the VAE transformer")
+    parser.add_argument("-beta_schedule", type=str, default="linear", help="schedule for KL annealing (linear or linear with warm-up")
+    parser.add_argument("-n_cycle", type=int, default=1,
+                        help="number of cyclic schedule for KL annealing.")
     # training params.
     parser.add_argument("-bs", type=int, default=32, help="batch size")
     parser.add_argument("-ep", type=int, default=5, help="number of epochs")
@@ -149,10 +153,14 @@ def run(args):
     checkpoint_path = create_ckpt_path(args, out_path)
     ckpt_manager = get_checkpoints(transformer, optimizer, checkpoint_path)
 
+    # get range of kl_weights for KL annealing in VAE training:
+    n_iter = args.ep * len(train_dataset)
+    range_klweights = get_klweights(beta_schedule=args.beta_schedule, n_cycle=args.n_cycle, n_iter=n_iter)
+
     results = train_fn[args.model](EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset,
                                    transformer=transformer,
                                    optimizer=optimizer, loss_object=loss_object, ckpt_manager=ckpt_manager,
-                                   logger=logger, train_writer=train_writer, val_writer=val_writer)
+                                   logger=logger, train_writer=train_writer, val_writer=val_writer, range_klweights=range_klweights)
     results["train_ppl"] = np.exp(results[train_losses[args.model]])
     results["val_ppl"] = np.exp(results[val_losses[args.model]])
     # save results
@@ -172,9 +180,6 @@ def run(args):
         f.create_dataset('inputs', data=inputs)
         f.create_dataset('targets', data=targets)
         f.create_dataset('preds', data=preds)
-    # for (path, arr) in zip([os.path.join(inference_path, "inputs.npy"), os.path.join(inference_path, "targets.npy"),
-    #                         os.path.join(inference_path, "preds.npy")], [inputs, targets, preds]):
-    #     np.save(path, arr)
     text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())
@@ -187,3 +192,20 @@ if __name__ == '__main__':
     parser = get_parser()
     args = parser.parse_args()
     run(args)
+
+# hparams for T-CVAE
+# We set our model parameters based on preliminary experi- ments on the development data.
+# For all models including baselines, dmodel is set to 512 and demb is set to 300. For Transformer models,
+# the head of attention H is set to 8 and the number of Transformer blocks L is set to 6.
+# The num- ber of LSTM layers is set to 2. For VAE models, dz is set to 64 and the annealing step is set to 20000.
+# We apply dropout to the output of each sub-layer in Transformer blocks. We use a rate Pdrop = 0.15 for all models.
+# We use the Adam Optimizer with an initial learning rate of 10−4, momentum β1 = 0.9, β2 = 0.99 and weight decay ? = 10−9.
+# The batch size is set to 64. We use greedy search for all models and initialize them with 300-dimensional Glove word vectors.
+
+
+# beta cycling schedule.
+#Specifically, we use the cyclical schedule to anneal β for 10 periods (Fu et al., 2019).
+# Within one period, there are three consecutive stages: Training AE (β = 0) for 0.5 proportion,
+# annealing β from 0 to 1 for 0.25 proportion, and fixing β = 1 for 0.25 proportion.
+
+# check influence of learning rate.

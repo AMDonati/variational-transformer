@@ -3,6 +3,41 @@ import time
 from src.train.utils import CustomSchedule, get_checkpoints, loss_function, accuracy_function, write_to_tensorboard
 from src.models.transformer import Transformer, VAETransformer
 
+def frange_cycle_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio=0.5):
+    L = np.ones(n_iter) * stop
+    period = n_iter/n_cycle
+    step = (stop-start)/(period*ratio) # linear schedule
+
+    for c in range(n_cycle):
+        v, i = start, 0
+        while v <= stop and (int(i+c*period) < n_iter):
+            L[int(i+c*period)] = v
+            v += step
+            i += 1
+    return L
+
+def frange_cycle_zero_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio_increase=0.5, ratio_zero=0.25):
+    L = np.ones(n_iter) * stop
+    period = n_iter/n_cycle
+    step = (stop-start)/(period*ratio_increase) # linear schedule
+
+    for c in range(n_cycle):
+        v, i = start, 0
+        while v <= stop and (int(i+c*period) < n_iter):
+            if i < period*ratio_zero:
+                L[int(i+c*period)] = start
+            else:
+                L[int(i+c*period)] = v
+                v += step
+            i += 1
+    return L
+
+def get_klweights(beta_schedule, n_cycle, n_iter):
+    if beta_schedule == "linear":
+        range_klweights = frange_cycle_linear(n_iter=n_iter, n_cycle=n_cycle)
+    elif beta_schedule == "warmup":
+        range_klweights = frange_cycle_zero_linear(n_iter=n_iter, n_cycle=n_cycle)
+    return range_klweights
 
 # train_step_signature = [
 #     tf.TensorSpec(shape=(None, None), dtype=tf.int64),
@@ -30,8 +65,11 @@ def train_step(inp, tar, transformer, optimizer, loss_object):
 
 # kl_weights = tf.minimum(tf.to_float(self.global_step) / 20000, 1.0) # simple KL annealing schedule.
 # global step = step for each update.
+# if num_iters % args.cycle >= args.cycle - args.beta_warmup:
+# beta = min(1.0, beta + (1. - args.beta_0) / args.beta_warmup)
 
-def train_step_vae(inp, tar, transformer, optimizer, loss_object, global_step):
+
+def train_step_vae(inp, tar, transformer, optimizer, loss_object, kl_weights):
     tar_inp = tar[:, :-1]
     tar_real = tar[:, 1:]
 
@@ -39,7 +77,7 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, global_step):
         predictions, _, kl_loss = transformer((inp, tar_inp),
                                               True)
         ce_loss = loss_function(tar_real, predictions, loss_object)
-        kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
+        #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
         loss = ce_loss + kl_weights * kl_loss
 
     gradients = tape.gradient(loss, transformer.trainable_variables)
@@ -61,20 +99,20 @@ def eval_step(inp, tar, transformer, loss_object):
     return loss, accuracy
 
 
-def eval_step_vae(inp, tar, transformer, loss_object, global_step):
+def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
     tar_inp = tar[:, :-1]
     tar_real = tar[:, 1:]
 
     predictions, _, kl_loss = transformer((inp, tar_inp),
                                           False)
     ce_loss = loss_function(tar_real, predictions, loss_object)
-    kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
+    #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
     loss = ce_loss + kl_weights * kl_loss
     accuracy = accuracy_function(tar_real, predictions)
     return (loss, ce_loss, kl_loss), accuracy
 
 
-def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None,
+def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, range_klweights=None, logger=None,
           train_writer=None, val_writer=None):
     metrics = dict.fromkeys(["train_loss", "val_loss", "train_accuracy", "val_accuracy"])
     for key in metrics.keys():
@@ -126,7 +164,7 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
     return metrics
 
 
-def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, logger=None,
+def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, range_klweights, logger=None,
               train_writer=None, val_writer=None):
     metrics = dict.fromkeys(
         ["train_loss", "val_loss", "train_ce_loss", "val_ce_loss", "train_kl_loss", "val_kl_loss", "train_accuracy",
@@ -140,8 +178,9 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
         val_loss_epoch, val_ce_loss_epoch, val_kl_loss_epoch, val_accuracy_epoch = 0., 0., 0., 0.
 
         for (batch, (inp, tar)) in enumerate(train_dataset):
+            kl_weights = tf.constant(range_klweights[global_step], dtype=tf.float32)
             (loss, ce_loss, kl_loss), accuracy_batch, kl_weights = train_step_vae(inp, tar, transformer, optimizer,
-                                                                                  loss_object, global_step)
+                                                                                  loss_object, kl_weights)
             # get learnable_query:
             learned_q = tf.squeeze(transformer.encoder.learnable_query[:, :, 0])
             if train_writer is not None:
@@ -161,7 +200,7 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
 
         for (batch_val, (inp, tar)) in enumerate(val_dataset):
             (val_loss, val_ce_loss, val_kl_loss), val_accuracy = eval_step_vae(inp, tar, transformer, loss_object,
-                                                                               global_step)
+                                                                               kl_weights)
             if val_writer is not None:
                 write_to_tensorboard(writer=val_writer, loss=val_loss, ce_loss=val_ce_loss, kl_loss=val_kl_loss,
                                      accuracy=val_accuracy, kl_weights=None, global_step=global_step, learned_q=None)
