@@ -51,7 +51,7 @@ def accuracy_function(real, pred):
   mask = tf.cast(mask, dtype=tf.float32)
   return tf.reduce_sum(accuracies)/tf.reduce_sum(mask)
 
-def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, global_step, learned_q=None):
+def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, global_step, learned_q=None, ce_loss_posterior=None):
     with writer.as_default():
         tf.summary.scalar("loss", loss, step=global_step)
         tf.summary.scalar("ce_loss", ce_loss, step=global_step)
@@ -61,6 +61,8 @@ def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, g
             tf.summary.scalar("kl_weight", kl_weights, step=global_step)
         if learned_q is not None:
             tf.summary.scalar("learnable_query_dim0", learned_q, step=global_step)
+        if ce_loss_posterior is not None:
+            tf.summary.scalar("ce_loss_posterior", ce_loss_posterior, step=global_step)
 
 def frange_cycle_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio=0.5):
     L = np.ones(n_iter) * stop

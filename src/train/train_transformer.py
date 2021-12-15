@@ -3,42 +3,6 @@ import time
 from src.train.utils import CustomSchedule, get_checkpoints, loss_function, accuracy_function, write_to_tensorboard
 from src.models.transformer import Transformer, VAETransformer
 
-def frange_cycle_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio=0.5):
-    L = np.ones(n_iter) * stop
-    period = n_iter/n_cycle
-    step = (stop-start)/(period*ratio) # linear schedule
-
-    for c in range(n_cycle):
-        v, i = start, 0
-        while v <= stop and (int(i+c*period) < n_iter):
-            L[int(i+c*period)] = v
-            v += step
-            i += 1
-    return L
-
-def frange_cycle_zero_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio_increase=0.5, ratio_zero=0.25):
-    L = np.ones(n_iter) * stop
-    period = n_iter/n_cycle
-    step = (stop-start)/(period*ratio_increase) # linear schedule
-
-    for c in range(n_cycle):
-        v, i = start, 0
-        while v <= stop and (int(i+c*period) < n_iter):
-            if i < period*ratio_zero:
-                L[int(i+c*period)] = start
-            else:
-                L[int(i+c*period)] = v
-                v += step
-            i += 1
-    return L
-
-def get_klweights(beta_schedule, n_cycle, n_iter):
-    if beta_schedule == "linear":
-        range_klweights = frange_cycle_linear(n_iter=n_iter, n_cycle=n_cycle)
-    elif beta_schedule == "warmup":
-        range_klweights = frange_cycle_zero_linear(n_iter=n_iter, n_cycle=n_cycle)
-    return range_klweights
-
 # train_step_signature = [
 #     tf.TensorSpec(shape=(None, None), dtype=tf.int64),
 #     tf.TensorSpec(shape=(None, None), dtype=tf.int64),
@@ -105,11 +69,14 @@ def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
 
     predictions, _, kl_loss = transformer((inp, tar_inp),
                                           False)
+    predictions_posterior, _, _ = transformer((inp, tar_inp),
+                                          True)
     ce_loss = loss_function(tar_real, predictions, loss_object)
+    ce_loss_posterior = loss_function(tar_real, predictions_posterior, loss_object)
     #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
     loss = ce_loss + kl_weights * kl_loss
     accuracy = accuracy_function(tar_real, predictions)
-    return (loss, ce_loss, kl_loss), accuracy
+    return (loss, ce_loss, kl_loss), accuracy, ce_loss_posterior
 
 
 def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, range_klweights=None, logger=None,
@@ -172,6 +139,7 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
     for key in metrics.keys():
         metrics[key] = []
     global_step = 0
+    global_step_val = 0
     for epoch in range(EPOCHS):
         start = time.time()
         loss_epoch, ce_loss_epoch, kl_loss_epoch, accuracy_epoch = 0., 0., 0., 0.
@@ -199,15 +167,16 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             metrics[key].append((val / (batch + 1)).numpy())
 
         for (batch_val, (inp, tar)) in enumerate(val_dataset):
-            (val_loss, val_ce_loss, val_kl_loss), val_accuracy = eval_step_vae(inp, tar, transformer, loss_object,
+            (val_loss, val_ce_loss, val_kl_loss), val_accuracy, val_ce_loss_posterior = eval_step_vae(inp, tar, transformer, loss_object,
                                                                                kl_weights)
             if val_writer is not None:
                 write_to_tensorboard(writer=val_writer, loss=val_loss, ce_loss=val_ce_loss, kl_loss=val_kl_loss,
-                                     accuracy=val_accuracy, kl_weights=None, global_step=global_step, learned_q=None)
+                                     accuracy=val_accuracy, kl_weights=None, global_step=global_step_val, learned_q=None, ce_loss_posterior=val_ce_loss_posterior)
             val_loss_epoch += val_loss
             val_ce_loss_epoch += val_ce_loss
             val_kl_loss_epoch += val_kl_loss
             val_accuracy_epoch += val_accuracy
+            global_step_val += 1
 
         for key, val in zip(["val_loss", "val_ce_loss", "val_kl_loss", "val_accuracy"],
                             [val_loss_epoch, val_ce_loss_epoch, val_kl_loss_epoch,
