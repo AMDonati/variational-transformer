@@ -27,5 +27,6 @@ EP=30
 LATENT="attention"
 BETA_SCHEDULE="warmup"
 N_CYCLE=1
+P_DROP=0.0
 
-srun python -u src/scripts/run_transformer.py -model $MODEL -latent $LATENT -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH -beta_schedule $BETA_SCHEDULE -n_cycle $N_CYCLE
+srun python -u src/scripts/run_transformer.py -model $MODEL -latent $LATENT -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH -beta_schedule $BETA_SCHEDULE -n_cycle $N_CYCLE -pdrop $P_DROP
