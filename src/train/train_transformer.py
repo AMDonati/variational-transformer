@@ -15,7 +15,7 @@ def train_step(inp, tar, transformer, optimizer, loss_object):
     tar_real = tar[:, 1:]
 
     with tf.GradientTape() as tape:
-        predictions, _, _ = transformer((inp, tar_inp),
+        predictions, _, _, _ = transformer((inp, tar_inp),
                                         True)
         loss = loss_function(tar_real, predictions, loss_object)
 
@@ -38,7 +38,7 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, kl_weights):
     tar_real = tar[:, 1:]
 
     with tf.GradientTape() as tape:
-        predictions, _, kl_loss = transformer((inp, tar_inp),
+        predictions, _, kl_loss, (mean, logvar) = transformer((inp, tar_inp),
                                               True)
         ce_loss = loss_function(tar_real, predictions, loss_object)
         #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
@@ -49,14 +49,14 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, kl_weights):
 
     accuracy = accuracy_function(tar_real, predictions)
 
-    return (loss, ce_loss, kl_loss), accuracy, kl_weights
+    return (loss, ce_loss, kl_loss), accuracy, kl_weights, (mean, logvar)
 
 
 def eval_step(inp, tar, transformer, loss_object):
     tar_inp = tar[:, :-1]
     tar_real = tar[:, 1:]
 
-    predictions, _, _ = transformer((inp, tar_inp),
+    predictions, _, _, _ = transformer((inp, tar_inp),
                                     False)
     loss = loss_function(tar_real, predictions, loss_object)
     accuracy = accuracy_function(tar_real, predictions)
@@ -67,16 +67,16 @@ def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
     tar_inp = tar[:, :-1]
     tar_real = tar[:, 1:]
 
-    predictions, _, kl_loss = transformer((inp, tar_inp),
+    predictions, _, kl_loss, (mean, logvar) = transformer((inp, tar_inp),
                                           False)
-    predictions_posterior, _, _ = transformer((inp, tar_inp),
+    predictions_posterior, _, _, (mean_p, logvar_p) = transformer((inp, tar_inp),
                                           True)
     ce_loss = loss_function(tar_real, predictions, loss_object)
     ce_loss_posterior = loss_function(tar_real, predictions_posterior, loss_object)
     #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
     loss = ce_loss + kl_weights * kl_loss
     accuracy = accuracy_function(tar_real, predictions)
-    return (loss, ce_loss, kl_loss), accuracy, ce_loss_posterior
+    return (loss, ce_loss, kl_loss), accuracy, ce_loss_posterior, (mean, logvar), (mean_p, logvar_p)
 
 
 def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, range_klweights=None, logger=None,
@@ -106,9 +106,17 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
         for key, val in zip(["val_loss", "val_accuracy"], [val_loss_epoch, val_accuracy_epoch]):
             metrics[key].append((val / (batch_val + 1)).numpy())
 
-        ckpt_save_path = ckpt_manager.save()
+        # saving checkpoints only if val_loss improve.
+        if epoch > 0:
+            if metrics["val_loss"][-1] < best_val_loss:
+                best_val_loss = metrics["val_loss"][-1]
+                ckpt_save_path = ckpt_manager.save()
+                print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
+        else:
+            best_val_loss = metrics["val_loss"][-1]
+            ckpt_save_path = ckpt_manager.save()
+            print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
 
-        print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
         if logger is None:
             print('Epoch: {}'.format(epoch + 1))
             print('Train Loss: {:.4f}, Train Accuracy {:.4f}'.format(metrics["train_loss"][-1],
@@ -147,13 +155,14 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
 
         for (batch, (inp, tar)) in enumerate(train_dataset):
             kl_weights = tf.constant(range_klweights[global_step], dtype=tf.float32)
-            (loss, ce_loss, kl_loss), accuracy_batch, kl_weights = train_step_vae(inp, tar, transformer, optimizer,
+            (loss, ce_loss, kl_loss), accuracy_batch, kl_weights, (mean, logvar) = train_step_vae(inp, tar, transformer, optimizer,
                                                                                   loss_object, kl_weights)
             # get learnable_query:
             learned_q = tf.squeeze(transformer.encoder.learnable_query[:, :, 0])
+            logvar = tf.math.exp(tf.squeeze(logvar[0,:,0]))
             if train_writer is not None:
                 write_to_tensorboard(writer=train_writer, loss=loss, ce_loss=ce_loss, kl_loss=kl_loss,
-                                     accuracy=accuracy_batch, kl_weights=kl_weights, global_step=global_step,
+                                     accuracy=accuracy_batch, logvar=logvar, kl_weights=kl_weights, global_step=global_step,
                                      learned_q=learned_q)
             loss_epoch += loss
             ce_loss_epoch += ce_loss
@@ -167,11 +176,11 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             metrics[key].append((val / (batch + 1)).numpy())
 
         for (batch_val, (inp, tar)) in enumerate(val_dataset):
-            (val_loss, val_ce_loss, val_kl_loss), val_accuracy, val_ce_loss_posterior = eval_step_vae(inp, tar, transformer, loss_object,
+            (val_loss, val_ce_loss, val_kl_loss), val_accuracy, val_ce_loss_posterior, (mean, logvar), (mean_p, logvar_p) = eval_step_vae(inp, tar, transformer, loss_object,
                                                                                kl_weights)
             if val_writer is not None:
                 write_to_tensorboard(writer=val_writer, loss=val_loss, ce_loss=val_ce_loss, kl_loss=val_kl_loss,
-                                     accuracy=val_accuracy, kl_weights=None, global_step=global_step_val, learned_q=None, ce_loss_posterior=val_ce_loss_posterior)
+                                     accuracy=val_accuracy, logvar=tf.math.exp(tf.squeeze(logvar[0,:,0])), kl_weights=None, global_step=global_step_val, learned_q=None, ce_loss_posterior=val_ce_loss_posterior, logvar_posterior=tf.math.exp(tf.squeeze(logvar_p[0,:,0])))
             val_loss_epoch += val_loss
             val_ce_loss_epoch += val_ce_loss
             val_kl_loss_epoch += val_kl_loss
@@ -183,9 +192,19 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
                              val_accuracy_epoch]):
             metrics[key].append((val / (batch_val + 1)).numpy())
 
-        ckpt_save_path = ckpt_manager.save()
+        # saving checkpoints only if val_loss improve.
+        if epoch > 0:
+            if metrics["val_ce_loss"][-1] < best_val_loss:
+                best_val_loss = metrics["val_ce_loss"][-1]
+                ckpt_save_path = ckpt_manager.save()
+                print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
+        else:
+            best_val_loss = metrics["val_ce_loss"][-1]
+            ckpt_save_path = ckpt_manager.save()
+            print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
+        #ckpt_save_path = ckpt_manager.save()
 
-        print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
+
         if logger is None:
             print('Epoch: {}'.format(epoch + 1))
             print('Train Loss: {:.4f}, Train CE loss: {:.4f}, Train Accuracy {:.4f}'.format(metrics["train_loss"][-1],

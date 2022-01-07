@@ -30,15 +30,17 @@ def get_parser():
     parser.add_argument("-num_layers", type=int, default=1,
                         help="number of layers in the network.")
     parser.add_argument("-num_heads", type=int, default=1, help="number of attention heads for Transformer networks")
-    parser.add_argument("-d_model", type=int, default=8, help="depth of attention parameters")
-    parser.add_argument("-dff", type=int, default=8, help="dimension of feed-forward network")
+    parser.add_argument("-d_model", type=int, default=32, help="depth of attention parameters")
+    parser.add_argument("-dff", type=int, default=32, help="dimension of feed-forward network")
     parser.add_argument("-pe", type=int, default=1000, help="maximum positional encoding")
     parser.add_argument("-p_drop", type=float, default=0.1, help="dropout on output layer")
     # VAE Transformer params:
-    parser.add_argument("-latent", type=str, default="input", help="where to inject the latent in the VAE transformer")
+    parser.add_argument("-latent", type=str, default="attention", help="where to inject the latent in the VAE transformer")
     parser.add_argument("-beta_schedule", type=str, default="linear", help="schedule for KL annealing (linear or linear with warm-up")
     parser.add_argument("-n_cycle", type=int, default=1,
                         help="number of cyclic schedule for KL annealing.")
+    parser.add_argument("-beta_stop", type=float, default=1.,
+                        help="maximum value for kl weights.")
     # training params.
     parser.add_argument("-bs", type=int, default=32, help="batch size")
     parser.add_argument("-ep", type=int, default=5, help="number of epochs")
@@ -107,7 +109,7 @@ def create_out_path(args):
                                                                args.bs,
                                                                args.p_drop)
         if args.model == "VAE":
-            out_file = out_file + "_{}".format(args.latent)
+            out_file = out_file + "_{}".format(args.latent) + "_{}{}-{}".format(args.beta_schedule, args.n_cycle, args.beta_stop)
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
         if not os.path.isdir(output_folder):
@@ -115,15 +117,22 @@ def create_out_path(args):
         return output_folder
 
 
-def plot_results(results, out_path):
-    train_loss = results["train_loss"]
-    val_loss = results["val_loss"]
+def plot_results(results, out_path, train_key="train_loss", val_key="val_loss"):
+    train_loss = results[train_key]
+    val_loss = results[val_key]
+    fig, ax = plt.subplots()
     x = np.linspace(1, len(train_loss), len(train_loss))
-    plt.plot(x, train_loss, 'red', lw=2, label='train loss')
-    plt.plot(x, val_loss, 'cyan', lw=2, label='val loss')
-    plt.legend(fontsize=10)
-    plt.savefig(os.path.join(out_path, "loss_plot.png"))
-
+    ax.plot(x, train_loss, 'red', lw=2, label='train loss')
+    ax.plot(x, val_loss, 'cyan', lw=2, label='val loss')
+    ax.legend(fontsize=10)
+    va = "bottom"
+    for line in ax.lines:
+        for x_value, y_value in zip(line.get_xdata(), line.get_ydata()):
+            label = "{:.2f}".format(y_value)
+            ax.annotate(label, (x_value, y_value), xytext=(0, 5),
+                        textcoords="offset points", ha='center', va=va)
+        va = "top"
+    fig.savefig(os.path.join(out_path, "loss_plot.png"))
 
 def run(args):
     # Create out path & logger & config.json file
@@ -142,7 +151,7 @@ def run(args):
     transformer = models[args.model](
         num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, dff=args.dff,
         input_vocab_size=vocab_size, target_vocab_size=vocab_size,
-        pe_input=args.pe, pe_target=args.pe, latent=args.latent)
+        pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop)
 
     # Train Transformer
     learning_rate = CustomSchedule(args.d_model)
@@ -155,7 +164,7 @@ def run(args):
 
     # get range of kl_weights for KL annealing in VAE training:
     n_iter = args.ep * len(train_dataset)
-    range_klweights = get_klweights(beta_schedule=args.beta_schedule, n_cycle=args.n_cycle, n_iter=n_iter)
+    range_klweights = get_klweights(beta_schedule=args.beta_schedule, n_cycle=args.n_cycle, n_iter=n_iter, beta_stop=args.beta_stop)
 
     results = train_fn[args.model](EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset,
                                    transformer=transformer,
@@ -167,7 +176,8 @@ def run(args):
     df_results = pd.DataFrame.from_records(results)
     df_results.to_csv(os.path.join(out_path, "train_history.csv"))
     # plot_results
-    plot_results(results, out_path)
+    (train_key, val_key) = ("train_loss", "val_loss") if args.model == "transformer" else ("train_ce_loss", "val_ce_loss")
+    plot_results(results, out_path, train_key, val_key)
 
     # generate text at inference
     start_token = dataset.vocab["<SOS>"]

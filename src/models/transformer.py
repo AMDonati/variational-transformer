@@ -30,7 +30,7 @@ class Transformer(tf.keras.Model):
 
         final_output = self.final_layer(dec_output)  # (batch_size, tar_seq_len, target_vocab_size)
 
-        return final_output, attention_weights, 0.  # 0. is for KL loss.
+        return final_output, attention_weights, 0., None  # 0. is for KL loss., None for (mean, logvar)
 
     def create_masks(self, inp, tar, size1=None, size2=None):
         # Encoder padding mask
@@ -146,7 +146,7 @@ class VAETransformer(Transformer):
         else:
             final_output = self.final_layer(dec_output)  # (batch_size, tar_seq_len, target_vocab_size)
 
-        return final_output, attention_weights, kl
+        return final_output, attention_weights, kl, (mean, logvar)
 
 
 if __name__ == '__main__':
@@ -158,17 +158,21 @@ if __name__ == '__main__':
     temp_input = tf.random.uniform((64, 38), dtype=tf.int64, minval=0, maxval=200)
     temp_target = tf.random.uniform((64, 36), dtype=tf.int64, minval=0, maxval=200)
 
-    fn_out, _, _ = sample_transformer((temp_input, temp_target), training=True)
+    #fn_out, _, _, _ = sample_transformer((temp_input, temp_target), training=True)
 
-    print(fn_out.shape)  # (batch_size, tar_seq_len, target_vocab_size)
+    #print(fn_out.shape)  # (batch_size, tar_seq_len, target_vocab_size)
 
     # -------------------------------------- VAE Transformer ----------------------------------------------------------------------------------
 
     sample_vae_transformer = VAETransformer(
         num_layers=2, d_model=32, num_heads=8, dff=128,
         input_vocab_size=8500, target_vocab_size=8000,
-        pe_input=10000, pe_target=6000, latent="output")
+        pe_input=10000, pe_target=6000, latent="output", rate=0.0)
 
-    vae_out, _, kl_loss = sample_vae_transformer((temp_input, temp_target), training=True)
+    vae_out, _, kl_loss, (mean, logvar) = sample_vae_transformer((temp_input, temp_target), training=True)
+    print(kl_loss)
+    print(vae_out.shape)
+
+    vae_out, _, kl_loss, (mean, logvar) = sample_vae_transformer((temp_input, temp_target), training=False)
     print(kl_loss)
     print(vae_out.shape)

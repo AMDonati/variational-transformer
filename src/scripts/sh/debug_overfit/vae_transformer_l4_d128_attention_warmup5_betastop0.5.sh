@@ -18,7 +18,7 @@ conda activate smc-t
 export PYTHONPATH=src:${PYTHONPATH}
 
 MODEL="VAE"
-OUTPUT_PATH="output/warmup5"
+OUTPUT_PATH="output/debug_overfit/betastop0.5"
 NUM_LAYERS=4
 D_MODEL=128
 DFF=512
@@ -27,5 +27,6 @@ EP=30
 LATENT="attention"
 BETA_SCHEDULE="warmup"
 N_CYCLE=5
+BETA_STOP=0.5
 
-srun python -u src/scripts/run_transformer.py -model $MODEL -latent $LATENT -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH -beta_schedule $BETA_SCHEDULE -n_cycle $N_CYCLE
+srun python -u src/scripts/run_transformer.py -model $MODEL -latent $LATENT -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH -beta_schedule $BETA_SCHEDULE -n_cycle $N_CYCLE -beta_stop $BETA_STOP

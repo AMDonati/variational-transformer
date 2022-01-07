@@ -51,18 +51,21 @@ def accuracy_function(real, pred):
   mask = tf.cast(mask, dtype=tf.float32)
   return tf.reduce_sum(accuracies)/tf.reduce_sum(mask)
 
-def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, global_step, learned_q=None, ce_loss_posterior=None):
+def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, logvar, global_step, learned_q=None, ce_loss_posterior=None, logvar_posterior=None):
     with writer.as_default():
         tf.summary.scalar("loss", loss, step=global_step)
         tf.summary.scalar("ce_loss", ce_loss, step=global_step)
         tf.summary.scalar("kl_loss", kl_loss, step=global_step)
         tf.summary.scalar("accuracy", accuracy, step=global_step)
+        tf.summary.scalar("var", logvar, step=global_step)
         if kl_weights is not None:
             tf.summary.scalar("kl_weight", kl_weights, step=global_step)
         if learned_q is not None:
             tf.summary.scalar("learnable_query_dim0", learned_q, step=global_step)
         if ce_loss_posterior is not None:
             tf.summary.scalar("ce_loss_posterior", ce_loss_posterior, step=global_step)
+        if logvar_posterior is not None:
+            tf.summary.scalar("var_posterior", logvar_posterior, step=global_step)
 
 def frange_cycle_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio=0.5):
     L = np.ones(n_iter) * stop
@@ -93,11 +96,13 @@ def frange_cycle_zero_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio_incr
             i += 1
     return L
 
-def get_klweights(beta_schedule, n_cycle, n_iter):
+def get_klweights(beta_schedule, n_cycle, n_iter, beta_stop=1.):
     if beta_schedule == "linear":
-        range_klweights = frange_cycle_linear(n_iter=n_iter, n_cycle=n_cycle)
+        range_klweights = frange_cycle_linear(n_iter=n_iter, n_cycle=n_cycle, stop=beta_stop)
     elif beta_schedule == "warmup":
-        range_klweights = frange_cycle_zero_linear(n_iter=n_iter, n_cycle=n_cycle)
+        range_klweights = frange_cycle_zero_linear(n_iter=n_iter, n_cycle=n_cycle, stop=beta_stop)
+    elif beta_schedule == "None":
+        range_klweights = [0.] * n_iter
     return range_klweights
 
 

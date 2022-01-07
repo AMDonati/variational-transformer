@@ -11,7 +11,7 @@ def inference(transformer, test_dataset, start_token, max_len=21, decoding="samp
     for (inputs, targets) in test_dataset.take(test_samples):
         tar_inp = tf.constant([start_token], shape=(inputs.shape[0], 1), dtype=tf.int32)
         for i in range(max_len):
-            predictions, _, _ = transformer((inputs, tar_inp),
+            predictions, _, _, _ = transformer((inputs, tar_inp),
                                          False)
             last_pred = predictions[:, -1]
             if decoding == "sampling":

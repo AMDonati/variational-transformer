@@ -59,9 +59,13 @@ def merge_one_experiment(path="output/temp", precision=4, to_remove="var_bleu"):
             config = open_config(os.path.join(dir_experiment, "config.json"))
             train_history_csv = os.path.join(dir_experiment, "train_history.csv")
             train_history = pd.read_csv(train_history_csv)
+            exp_path = os.path.basename(dir_conf)
+            val_loss_key = "val_loss" if "transformer" in exp_path else "val_ce_loss"
+            best_val_loss = pd.Series(min(train_history[val_loss_key]), name="best_val_ce_loss")
             metrics = pd.DataFrame(train_history.values[-1, 1:][np.newaxis, :],
                                    columns=transform_columns(train_history.columns[1:],
-                                                             path=os.path.basename(dir_conf)))
+                                                             path=exp_path))
+            metrics = pd.concat([metrics, best_val_loss], axis=1)
             metrics_all_runs.append(metrics)
             text = pd.read_csv(os.path.join(dir_experiment, "inference", "texts.csv"))
         if len(dirs) > 1:
