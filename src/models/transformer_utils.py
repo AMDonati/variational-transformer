@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def get_angles(pos, i, d_model):
@@ -55,6 +56,23 @@ def point_wise_feed_forward_network(d_model, dff):
         tf.keras.layers.Dense(dff, activation='relu'),  # (batch_size, seq_len, dff)
         tf.keras.layers.Dense(d_model)  # (batch_size, seq_len, d_model)
     ])
+
+def plot_attention_head(in_tokens, translated_tokens, attention):
+  # The plot is of the attention when a token was generated.
+  # The model didn't generate `<START>` in the output. Skip it.
+  translated_tokens = translated_tokens[1:]
+
+  ax = plt.gca()
+  ax.matshow(attention)
+  ax.set_xticks(range(len(in_tokens)))
+  ax.set_yticks(range(len(translated_tokens)))
+
+  labels = [label.decode('utf-8') for label in in_tokens.numpy()]
+  ax.set_xticklabels(
+      labels, rotation=90)
+
+  labels = [label.decode('utf-8') for label in translated_tokens.numpy()]
+  ax.set_yticklabels(labels)
 
 
 

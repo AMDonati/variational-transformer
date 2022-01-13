@@ -1,5 +1,5 @@
 import tensorflow as tf
-from src.models.self_attention import MultiHeadAttention
+from src.models.self_attention import MultiHeadAttention, Stochastic_MHA
 from src.models.transformer_utils import point_wise_feed_forward_network, positional_encoding
 
 
@@ -64,15 +64,17 @@ class Encoder(tf.keras.layers.Layer):
 
 class VAEEncoder(Encoder):
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-                 maximum_position_encoding, rate=0.1):
+                 maximum_position_encoding, rate=0.):
         super(VAEEncoder, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                          input_vocab_size=input_vocab_size,
                                          maximum_position_encoding=maximum_position_encoding, rate=rate)
-        self.average_attention = MultiHeadAttention(d_model, num_heads=1, non_linearity=True, scale=False) # in previous work, has a gelu non linearity.
-        self.learnable_query = tf.Variable(initial_value=tf.random.normal(shape=(1, 1, d_model), stddev=0.02), name="learnable_query")
-        #nn.init.normal_(w, std=0.02): in Transformer VAE: init with a random normal.
+        self.average_attention = MultiHeadAttention(d_model, num_heads=1, non_linearity=True,
+                                                    scale=False)  # in previous work, has a gelu non linearity.
+        self.learnable_query = tf.Variable(initial_value=tf.random.normal(shape=(1, 1, d_model), stddev=0.02),
+                                           name="learnable_query")
+        # nn.init.normal_(w, std=0.02): in Transformer VAE: init with a random normal.
 
-    def call(self, x, training, mask):
+    def call(self, x, training, mask, temperature=0.1):
         seq_len = tf.shape(x)[1]
 
         # adding embedding and position encoding.
@@ -86,8 +88,38 @@ class VAEEncoder(Encoder):
             x = self.enc_layers[i](x, training, mask)
 
         # out = tf.reduce_mean(x, axis=1, keepdims=True)
-        average_query = tf.tile(self.learnable_query, multiples=[x.shape[0], 1, 1]) # shape (B, 1, d_model)
-        out, _ = self.average_attention(q=average_query, k=x, v=x, mask=mask)
+        average_query = tf.tile(self.learnable_query, multiples=[x.shape[0], 1, 1])  # shape (B, 1, d_model)
+        out, attention_weights = self.average_attention(q=average_query, k=x, v=x, mask=mask)
+
+        return out, attention_weights  # (batch_size, 1, d_model)
 
 
-        return out# (batch_size, 1, d_model)
+class d_VAEEncoder(VAEEncoder):
+    def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
+                 maximum_position_encoding, rate=0., subsize=10):
+        super(d_VAEEncoder, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
+                                           input_vocab_size=input_vocab_size,
+                                           maximum_position_encoding=maximum_position_encoding, rate=rate)
+        self.subsize = subsize
+        self.average_attention = Stochastic_MHA(d_model=d_model, num_heads=1, non_linearity=True, scale=False,
+                                                subsize=subsize)
+
+    def call(self, x, training, mask, temperature=0.5):
+        seq_len = tf.shape(x)[1]
+
+        # adding embedding and position encoding.
+        x = self.embedding(x)  # (batch_size, input_seq_len, d_model)
+        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
+        x += self.pos_encoding[:, :seq_len, :]
+
+        x = self.dropout(x, training=training)
+
+        for i in range(self.num_layers):
+            x = self.enc_layers[i](x, training, mask)
+
+        # out = tf.reduce_mean(x, axis=1, keepdims=True)
+        average_query = tf.tile(self.learnable_query, multiples=[x.shape[0], 1, 1])  # shape (B, 1, d_model)
+        out, attn_weights, initial_attn_weights = self.average_attention(q=average_query, k=x, v=x, mask=mask,
+                                                                         temperature=temperature)
+
+        return out, (attn_weights, initial_attn_weights) # (batch_size, 1, d_model)
