@@ -2,6 +2,8 @@ import tensorflow as tf
 import time
 from src.train.utils import CustomSchedule, get_checkpoints, loss_function, accuracy_function, write_to_tensorboard
 from src.models.transformer import Transformer, VAETransformer
+from src.models.transformer_utils import plot_attention_head
+import os
 
 # train_step_signature = [
 #     tf.TensorSpec(shape=(None, None), dtype=tf.int64),
@@ -38,7 +40,7 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, kl_weights):
     tar_real = tar[:, 1:]
 
     with tf.GradientTape() as tape:
-        predictions, _, kl_loss, (mean, logvar) = transformer((inp, tar_inp),
+        predictions, attn_weights, kl_loss, (mean, logvar) = transformer((inp, tar_inp),
                                               True)
         ce_loss = loss_function(tar_real, predictions, loss_object)
         #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
@@ -49,7 +51,7 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, kl_weights):
 
     accuracy = accuracy_function(tar_real, predictions)
 
-    return (loss, ce_loss, kl_loss), accuracy, kl_weights, (mean, logvar)
+    return (loss, ce_loss, kl_loss), accuracy, attn_weights, kl_weights, (mean, logvar)
 
 
 def eval_step(inp, tar, transformer, loss_object):
@@ -62,12 +64,11 @@ def eval_step(inp, tar, transformer, loss_object):
     accuracy = accuracy_function(tar_real, predictions)
     return loss, accuracy
 
-
 def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
     tar_inp = tar[:, :-1]
     tar_real = tar[:, 1:]
 
-    predictions, _, kl_loss, (mean, logvar) = transformer((inp, tar_inp),
+    predictions, attn_weights, kl_loss, (mean, logvar) = transformer((inp, tar_inp),
                                           False)
     predictions_posterior, _, _, (mean_p, logvar_p) = transformer((inp, tar_inp),
                                           True)
@@ -76,11 +77,11 @@ def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
     #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
     loss = ce_loss + kl_weights * kl_loss
     accuracy = accuracy_function(tar_real, predictions)
-    return (loss, ce_loss, kl_loss), accuracy, ce_loss_posterior, (mean, logvar), (mean_p, logvar_p)
+    return (loss, ce_loss, kl_loss), accuracy, attn_weights, ce_loss_posterior, (mean, logvar), (mean_p, logvar_p)
 
 
 def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, range_klweights=None, logger=None,
-          train_writer=None, val_writer=None):
+          train_writer=None, val_writer=None, out_path=None, tokenizer=None):
     metrics = dict.fromkeys(["train_loss", "val_loss", "train_accuracy", "val_accuracy"])
     for key in metrics.keys():
         metrics[key] = []
@@ -140,7 +141,7 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
 
 
 def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, range_klweights, logger=None,
-              train_writer=None, val_writer=None):
+              train_writer=None, val_writer=None, out_path=None, tokenizer=None):
     metrics = dict.fromkeys(
         ["train_loss", "val_loss", "train_ce_loss", "val_ce_loss", "train_kl_loss", "val_kl_loss", "train_accuracy",
          "val_accuracy"])
@@ -148,6 +149,9 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
         metrics[key] = []
     global_step = 0
     global_step_val = 0
+    graph_path = os.path.join(out_path, "attention_maps")
+    if not os.path.isdir(graph_path):
+        os.makedirs(graph_path)
     for epoch in range(EPOCHS):
         start = time.time()
         loss_epoch, ce_loss_epoch, kl_loss_epoch, accuracy_epoch = 0., 0., 0., 0.
@@ -155,10 +159,13 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
 
         for (batch, (inp, tar)) in enumerate(train_dataset):
             kl_weights = tf.constant(range_klweights[global_step], dtype=tf.float32)
-            (loss, ce_loss, kl_loss), accuracy_batch, kl_weights, (mean, logvar) = train_step_vae(inp, tar, transformer, optimizer,
+            (loss, ce_loss, kl_loss), accuracy_batch, attn_weights, kl_weights, (mean, logvar) = train_step_vae(inp, tar, transformer, optimizer,
                                                                                   loss_object, kl_weights)
             # get learnable_query:
-            learned_q = tf.squeeze(transformer.encoder.learnable_query[:, :, 0])
+            if not transformer.simple_average:
+                learned_q = tf.squeeze(transformer.encoder.learnable_query[:, :, 0])
+            else:
+                learned_q = None
             logvar = tf.math.exp(tf.squeeze(logvar[0,:,0]))
             if train_writer is not None:
                 write_to_tensorboard(writer=train_writer, loss=loss, ce_loss=ce_loss, kl_loss=kl_loss,
@@ -170,13 +177,19 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             accuracy_epoch += accuracy_batch
             global_step += 1
 
+            if batch == 0 and not transformer.simple_average:
+                out_file = os.path.join(graph_path, "attention_map_train_ep{}.png".format(epoch))
+                in_tokens = tf.concat([inp, tar], axis=1)[0] #take first sample of first batch.
+                plot_attention_head(in_tokens, tf.squeeze(attn_weights[0]), tokenizer, out_file) # attn_weights[0] of shape (1,1,seq_len)
+
+
         for key, val in zip(["train_loss", "train_ce_loss", "train_kl_loss", "train_accuracy"],
                             [loss_epoch, ce_loss_epoch, kl_loss_epoch,
                              accuracy_epoch]):
             metrics[key].append((val / (batch + 1)).numpy())
 
         for (batch_val, (inp, tar)) in enumerate(val_dataset):
-            (val_loss, val_ce_loss, val_kl_loss), val_accuracy, val_ce_loss_posterior, (mean, logvar), (mean_p, logvar_p) = eval_step_vae(inp, tar, transformer, loss_object,
+            (val_loss, val_ce_loss, val_kl_loss), val_accuracy, attn_weights, val_ce_loss_posterior, (mean, logvar), (mean_p, logvar_p) = eval_step_vae(inp, tar, transformer, loss_object,
                                                                                kl_weights)
             if val_writer is not None:
                 write_to_tensorboard(writer=val_writer, loss=val_loss, ce_loss=val_ce_loss, kl_loss=val_kl_loss,
@@ -186,6 +199,11 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             val_kl_loss_epoch += val_kl_loss
             val_accuracy_epoch += val_accuracy
             global_step_val += 1
+
+            if batch_val == 0 and not transformer.simple_average:
+                out_file = os.path.join(graph_path, "attention_map_val_ep{}.png".format(epoch))
+                in_tokens = inp[0] #take first sample of first batch.
+                plot_attention_head(in_tokens, tf.squeeze(attn_weights[0]), tokenizer, out_file)
 
         for key, val in zip(["val_loss", "val_ce_loss", "val_kl_loss", "val_accuracy"],
                             [val_loss_epoch, val_ce_loss_epoch, val_kl_loss_epoch,

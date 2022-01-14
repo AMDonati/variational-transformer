@@ -64,12 +64,14 @@ class Encoder(tf.keras.layers.Layer):
 
 class VAEEncoder(Encoder):
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-                 maximum_position_encoding, rate=0.1):
+                 maximum_position_encoding, rate=0.1, simple_average=False):
         super(VAEEncoder, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                          input_vocab_size=input_vocab_size,
                                          maximum_position_encoding=maximum_position_encoding, rate=rate)
-        self.average_attention = MultiHeadAttention(d_model, num_heads=1, non_linearity=True, scale=False) # in previous work, has a gelu non linearity.
-        self.learnable_query = tf.Variable(initial_value=tf.random.normal(shape=(1, 1, d_model), stddev=0.02), name="learnable_query")
+        self.simple_average = simple_average
+        if not self.simple_average:
+            self.average_attention = MultiHeadAttention(d_model, num_heads=1, non_linearity=True, scale=False) # in previous work, has a gelu non linearity.
+            self.learnable_query = tf.Variable(initial_value=tf.random.normal(shape=(1, 1, d_model), stddev=0.02), name="learnable_query")
         #nn.init.normal_(w, std=0.02): in Transformer VAE: init with a random normal.
 
     def call(self, x, training, mask):
@@ -85,9 +87,11 @@ class VAEEncoder(Encoder):
         for i in range(self.num_layers):
             x = self.enc_layers[i](x, training, mask)
 
-        # out = tf.reduce_mean(x, axis=1, keepdims=True)
-        average_query = tf.tile(self.learnable_query, multiples=[x.shape[0], 1, 1]) # shape (B, 1, d_model)
-        out, _ = self.average_attention(q=average_query, k=x, v=x, mask=mask)
+        if self.simple_average:
+            out = tf.reduce_mean(x, axis=1, keepdims=True)
+            attn_weights = None
+        else:
+            average_query = tf.tile(self.learnable_query, multiples=[x.shape[0], 1, 1]) # shape (B, 1, d_model)
+            out, attn_weights = self.average_attention(q=average_query, k=x, v=x, mask=mask)
 
-
-        return out# (batch_size, 1, d_model)
+        return out, attn_weights# (batch_size, 1, d_model)

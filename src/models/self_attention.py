@@ -91,7 +91,7 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         concat_attention = tf.reshape(scaled_attention,
                                       (batch_size, -1, self.d_model))  # (batch_size, seq_len_q, d_model)
 
-        output = self.dense(concat_attention)  # (batch_size, seq_len_q, d_model)
+        output = self.dense(concat_attention)  # (batch_size, seq_len_q, d_model) #TODO: in originel average attention model there is no dense layer.
 
         return output, attention_weights
 

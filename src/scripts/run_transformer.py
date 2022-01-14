@@ -35,8 +35,12 @@ def get_parser():
     parser.add_argument("-pe", type=int, default=1000, help="maximum positional encoding")
     parser.add_argument("-p_drop", type=float, default=0.1, help="dropout on output layer")
     # VAE Transformer params:
-    parser.add_argument("-latent", type=str, default="attention", help="where to inject the latent in the VAE transformer")
-    parser.add_argument("-beta_schedule", type=str, default="linear", help="schedule for KL annealing (linear or linear with warm-up")
+    parser.add_argument("-latent", type=str, default="attention",
+                        help="where to inject the latent in the VAE transformer")
+    parser.add_argument("-simple_average", type=int, default=0,
+                        help="simple average or average attention in the VAE encoder.")
+    parser.add_argument("-beta_schedule", type=str, default="linear",
+                        help="schedule for KL annealing (linear or linear with warm-up")
     parser.add_argument("-n_cycle", type=int, default=1,
                         help="number of cyclic schedule for KL annealing.")
     parser.add_argument("-beta_stop", type=float, default=1.,
@@ -109,7 +113,10 @@ def create_out_path(args):
                                                                args.bs,
                                                                args.p_drop)
         if args.model == "VAE":
-            out_file = out_file + "_{}".format(args.latent) + "_{}{}-{}".format(args.beta_schedule, args.n_cycle, args.beta_stop)
+            out_file = out_file + "_{}".format(args.latent) + "_{}{}-{}".format(args.beta_schedule, args.n_cycle,
+                                                                                args.beta_stop)
+            if args.simple_average:
+                out_file = out_file + "_simpleavg"
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
         if not os.path.isdir(output_folder):
@@ -134,6 +141,7 @@ def plot_results(results, out_path, train_key="train_loss", val_key="val_loss"):
         va = "top"
     fig.savefig(os.path.join(out_path, "loss_plot.png"))
 
+
 def run(args):
     # Create out path & logger & config.json file
     out_path = create_out_path(args)
@@ -151,7 +159,7 @@ def run(args):
     transformer = models[args.model](
         num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, dff=args.dff,
         input_vocab_size=vocab_size, target_vocab_size=vocab_size,
-        pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop)
+        pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop, simple_average=args.simple_average)
 
     # Train Transformer
     learning_rate = CustomSchedule(args.d_model)
@@ -164,19 +172,22 @@ def run(args):
 
     # get range of kl_weights for KL annealing in VAE training:
     n_iter = args.ep * len(train_dataset)
-    range_klweights = get_klweights(beta_schedule=args.beta_schedule, n_cycle=args.n_cycle, n_iter=n_iter, beta_stop=args.beta_stop)
+    range_klweights = get_klweights(beta_schedule=args.beta_schedule, n_cycle=args.n_cycle, n_iter=n_iter,
+                                    beta_stop=args.beta_stop)
 
     results = train_fn[args.model](EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset,
                                    transformer=transformer,
                                    optimizer=optimizer, loss_object=loss_object, ckpt_manager=ckpt_manager,
-                                   logger=logger, train_writer=train_writer, val_writer=val_writer, range_klweights=range_klweights)
+                                   logger=logger, train_writer=train_writer, val_writer=val_writer,
+                                   range_klweights=range_klweights, tokenizer=dataset.tokenizer, out_path=out_path)
     results["train_ppl"] = np.exp(results[train_losses[args.model]])
     results["val_ppl"] = np.exp(results[val_losses[args.model]])
     # save results
     df_results = pd.DataFrame.from_records(results)
     df_results.to_csv(os.path.join(out_path, "train_history.csv"))
     # plot_results
-    (train_key, val_key) = ("train_loss", "val_loss") if args.model == "transformer" else ("train_ce_loss", "val_ce_loss")
+    (train_key, val_key) = ("train_loss", "val_loss") if args.model == "transformer" else (
+    "train_ce_loss", "val_ce_loss")
     plot_results(results, out_path, train_key, val_key)
 
     # generate text at inference
@@ -214,7 +225,7 @@ if __name__ == '__main__':
 
 
 # beta cycling schedule.
-#Specifically, we use the cyclical schedule to anneal β for 10 periods (Fu et al., 2019).
+# Specifically, we use the cyclical schedule to anneal β for 10 periods (Fu et al., 2019).
 # Within one period, there are three consecutive stages: Training AE (β = 0) for 0.5 proportion,
 # annealing β from 0 to 1 for 0.25 proportion, and fixing β = 1 for 0.25 proportion.
 

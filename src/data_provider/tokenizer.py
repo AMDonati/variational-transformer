@@ -19,11 +19,9 @@ class Tokenizer:
             texts.append(self.decode(tensor[b], **kwargs))
         return texts
 
-    def decode(self, text, **kwargs):
-        decode = self.decode_(text, idx_to_token=self.idx_to_token, stop_at_end=True, delim=' ',
-                              ignored=["<SOS>", "<PAD>"])
-        if type(decode) != torch.tensor and "return_tensors" in kwargs and kwargs["return_tensors"] == "pt":
-            decode = torch.tensor(decode)
+    def decode(self, text, ignored=["<SOS>", "<PAD>"], stop_at_end=True):
+        decode = self.decode_(text, idx_to_token=self.idx_to_token, stop_at_end=stop_at_end, delim=' ',
+                              ignored=ignored)
         return decode
 
     def encode_(self, seq_tokens, token_to_idx, allow_unk):

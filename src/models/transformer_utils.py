@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def get_angles(pos, i, d_model):
@@ -55,6 +56,18 @@ def point_wise_feed_forward_network(d_model, dff):
         tf.keras.layers.Dense(dff, activation='relu'),  # (batch_size, seq_len, dff)
         tf.keras.layers.Dense(d_model)  # (batch_size, seq_len, d_model)
     ])
+
+def plot_attention_head(in_tokens, attention, tokenizer, out_file):
+    # remove zero elements from attenion_weights:
+    attention_ = attention[attention != 0]
+    ax = plt.gca()
+    ax.matshow(attention_[tf.newaxis,:])
+    labels = tokenizer.decode(in_tokens.numpy(), ignored=["<PAD>"], stop_at_end=False).split(" ")
+    ax.set_xticks(range(len(labels)))
+     # TODO: Keep <SOS> and <EOS> tokens.
+    ax.set_xticklabels(
+      labels, rotation=90)
+    plt.savefig(out_file)
 
 
 
