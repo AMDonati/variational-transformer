@@ -18,7 +18,7 @@ conda activate smc-t
 export PYTHONPATH=src:${PYTHONPATH}
 
 MODEL="VAE"
-OUTPUT_PATH="output/debug_VAE"
+OUTPUT_PATH="output/debug_VAE_adding_logvar"
 NUM_LAYERS=4
 D_MODEL=128
 DFF=512

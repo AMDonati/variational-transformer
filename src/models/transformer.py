@@ -90,8 +90,8 @@ class VAETransformer(Transformer):
 
     def reparameterize(self, mean, logvar):
         eps = tf.random.normal(shape=mean.shape)
-        #return eps * tf.exp(logvar * .5) + mean
-        return mean
+        return eps * tf.exp(logvar * .5) + mean
+        #return mean
 
     def compute_kl(self, prior_mean, prior_logvar, recog_mean, recog_logvar):
         kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
