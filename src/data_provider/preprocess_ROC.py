@@ -34,7 +34,6 @@ def split_train_test(sentences, val_size=5000, test_size=5000):
 def tokenize(sentences, vocab):
     tokenize_func = lambda t: word_tokenize(t)
     tok_to_id_func = lambda t: [vocab["<SOS>"]]+[vocab[w] for w in t if w in vocab.keys()]+[vocab["<EOS>"]]
-    #TODO: add a SOS and EOS token ?
     tokenized_sentences = sentences.apply(tokenize_func)
     tokens_id = tokenized_sentences.apply(tok_to_id_func)
     len_sentences = tokens_id.apply(len)
@@ -43,19 +42,6 @@ def tokenize(sentences, vocab):
     pad_func = lambda t: t + [0] * (max_len - len(t))
     padded_sentences = tokens_id.apply(pad_func)
     return padded_sentences, len_sentences
-
-# def encode(lang1, lang2):
-#     lang1 = [tokenizer_pt.vocab_size] + tokenizer_pt.encode(
-#         lang1.numpy()) + [tokenizer_pt.vocab_size + 1]
-#
-#     lang2 = [tokenizer_en.vocab_size] + tokenizer_en.encode(
-#         lang2.numpy()) + [tokenizer_en.vocab_size + 1]
-#
-#     return lang1, lang2
-
-# def filter_max_length(x, y, max_length=MAX_LENGTH):
-#   return tf.logical_and(tf.size(x) <= max_length,
-#                         tf.size(y) <= max_length)
 
 
 def clean_text(sentences):
@@ -110,13 +96,3 @@ if __name__ == '__main__':
     data_path = "data/ROC/ROCStories_winter2017.csv"
     train_sentences, val_sentences, test_sentences = preprocess_data(data_path)
     print("done")
-
-    # #Thelatest
-    # release
-    # includes
-    # 98, 159
-    # ROCStories and 3, 744
-    # Story
-    # Cloze
-    # Test
-    # instances

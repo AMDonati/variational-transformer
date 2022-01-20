@@ -90,14 +90,8 @@ class VAETransformer(Transformer):
 
     def reparameterize(self, mean, logvar):
         eps = tf.random.normal(shape=mean.shape)
-        return eps * tf.exp(logvar * .5) + mean
-
-    # def combination_layer(self, x, z):
-    #     # x: shape of (batch_size, tar_seq_len, d_model)
-    #     # z: shape of (batch size, d_model)
-    #     out_ = self.final_layer(x)
-    #     p_z = self.final_layer(z)
-    #     return out_ + p_z
+        #return eps * tf.exp(logvar * .5) + mean
+        return mean
 
     def compute_kl(self, prior_mean, prior_logvar, recog_mean, recog_logvar):
         kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
@@ -108,10 +102,10 @@ class VAETransformer(Transformer):
     def call(self, inputs, training):
         # Keras models prefer if you pass all your inputs in the first argument
         inp, tar = inputs
-        if training:
-            encoder_input = tf.concat([inp, tar], axis=1)
-        else:
-            encoder_input = inp
+        # if training:
+        #     encoder_input = tf.concat([inp, tar], axis=1)
+        # else:
+        encoder_input = inp
 
         if self.decoder.latent == "attention":
             # add a dummy timestep to tar to create masks with the right length for pseudo self-attention:
@@ -122,19 +116,18 @@ class VAETransformer(Transformer):
         else:
             tar_ = tar
             enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input,
-                                                                                    tar_)  # TODO: problem here for latent = "attention". The decoding padding mask should include one more timestep for the latent.
-
+                                                                                    tar_)
         enc_output, avg_attn_weights = self.encoder(encoder_input, training,
-                                  enc_padding_mask)  # (batch_size, inp_seq_len, d_model) #TODO: do we need an enc_padding mask ?
+                                  enc_padding_mask)  # (batch_size, inp_seq_len, d_model)
 
         # compute mean, logvar from prior and posterior
         recog_mean, recog_logvar = self.encode_posterior(enc_output)
-        prior_mean, prior_logvar = self.encode_prior(enc_output)
+        #prior_mean, prior_logvar = self.encode_prior(enc_output)
         # compute kl
-        kl = self.compute_kl(prior_mean, prior_logvar, recog_mean, recog_logvar)
+        kl = self.compute_kl(recog_mean, recog_logvar, recog_mean, recog_logvar)
         # derive latent z from mean and logvar
-        mean = recog_mean if training else prior_mean
-        logvar = recog_logvar if training else prior_logvar
+        mean = recog_mean
+        logvar = recog_logvar
         z = self.reparameterize(mean, logvar)
 
         # dec_output.shape == (batch_size, tar_seq_len, d_model)
