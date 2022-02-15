@@ -3,16 +3,18 @@ import pandas as pd
 import time
 
 
-def inference(transformer, test_dataset, start_token, max_len=21, decoding="sampling", temp=1, test_samples=-1, logger=None):
+def inference(transformer, test_dataset, start_token, max_len=21, decoding="sampling", temp=1, test_samples=-1, logger=None, training=False):
     start_time = time.time()
     all_preds, all_targets, all_inputs = [], [], []
     if test_samples is None:
         test_samples = -1
     for (inputs, targets) in test_dataset.take(test_samples):
+        print("decoding text sample")
         tar_inp = tf.constant([start_token], shape=(inputs.shape[0], 1), dtype=tf.int32)
         for i in range(max_len):
+            print("decoding {}-th word".format(i+1))
             predictions, _, _, _ = transformer((inputs, tar_inp),
-                                         False)
+                                         training=training) #TODO: choose if training=True or False.
             last_pred = predictions[:, -1]
             if decoding == "sampling":
                 last_pred = tf.random.categorical(logits=last_pred / temp, num_samples=1, dtype=tf.int32)
