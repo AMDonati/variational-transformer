@@ -25,4 +25,4 @@ DFF=512
 BS=32
 EP=30
 
-srun python -u src/scripts/run_transformer.py -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH
+srun python -u src/scripts/run_transformer.py -model "transformer" -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH
