@@ -1,6 +1,6 @@
 import tensorflow as tf
 import time
-from src.train.utils import CustomSchedule, get_checkpoints, loss_function, accuracy_function, write_to_tensorboard
+from src.train.utils import CustomSchedule, get_checkpoints, loss_function, accuracy_function, write_to_tensorboard, write_to_tensorboard_baseline
 from src.models.transformer import Transformer, VAETransformer
 from src.models.transformer_utils import plot_attention_head
 import os
@@ -83,6 +83,8 @@ def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
 def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimizer, loss_object, range_klweights=None, logger=None,
           train_writer=None, val_writer=None, out_path=None, tokenizer=None):
     metrics = dict.fromkeys(["train_loss", "val_loss", "train_accuracy", "val_accuracy"])
+    global_step = 0
+    global_step_val = 0
     for key in metrics.keys():
         metrics[key] = []
     for epoch in range(EPOCHS):
@@ -96,6 +98,10 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
             loss_epoch += loss_batch
             accuracy_epoch += accuracy_batch
 
+            if train_writer is not None:
+                write_to_tensorboard_baseline(writer=train_writer, ce_loss=loss_batch, accuracy=accuracy_batch,  global_step=global_step)
+                global_step += 1
+
         for key, val in zip(["train_loss", "train_accuracy"], [loss_epoch, accuracy_epoch]):
             metrics[key].append((val / (batch + 1)).numpy())
 
@@ -103,6 +109,10 @@ def train(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, optimiz
             loss_batch, accuracy_batch = eval_step(inp, tar, transformer, loss_object)
             val_loss_epoch += loss_batch
             val_accuracy_epoch += accuracy_batch
+
+            if val_writer is not None:
+                write_to_tensorboard_baseline(writer=val_writer, ce_loss=loss_batch, accuracy=accuracy_batch, global_step=global_step_val)
+                global_step_val += 1
 
         for key, val in zip(["val_loss", "val_accuracy"], [val_loss_epoch, val_accuracy_epoch]):
             metrics[key].append((val / (batch_val + 1)).numpy())

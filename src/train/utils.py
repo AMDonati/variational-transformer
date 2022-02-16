@@ -67,6 +67,11 @@ def write_to_tensorboard(writer, loss, ce_loss, kl_loss, accuracy, kl_weights, l
         if logvar_posterior is not None:
             tf.summary.scalar("var_posterior", logvar_posterior, step=global_step)
 
+def write_to_tensorboard_baseline(writer, ce_loss, accuracy, global_step):
+    with writer.as_default():
+        tf.summary.scalar("ce_loss", ce_loss, step=global_step)
+        tf.summary.scalar("accuracy", accuracy, step=global_step)
+
 def frange_cycle_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio=0.5):
     L = np.ones(n_iter) * stop
     period = n_iter/n_cycle

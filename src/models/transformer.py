@@ -91,7 +91,6 @@ class VAETransformer(Transformer):
     def reparameterize(self, mean, logvar):
         eps = tf.random.normal(shape=mean.shape)
         return eps * tf.exp(logvar * .5) + mean
-        #return mean
 
     def compute_kl(self, prior_mean, prior_logvar, recog_mean, recog_logvar):
         kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
@@ -102,10 +101,11 @@ class VAETransformer(Transformer):
     def call(self, inputs, training):
         # Keras models prefer if you pass all your inputs in the first argument
         inp, tar = inputs
-        # if training:
-        #     encoder_input = tf.concat([inp, tar], axis=1)
-        # else:
-        encoder_input = inp
+        if training:
+            tar = tf.cast(tar, dtype=tf.int64)
+            encoder_input = tf.concat([inp, tar], axis=1)
+        else:
+            encoder_input = inp
 
         if self.decoder.latent == "attention":
             # add a dummy timestep to tar to create masks with the right length for pseudo self-attention:
@@ -122,12 +122,12 @@ class VAETransformer(Transformer):
 
         # compute mean, logvar from prior and posterior
         recog_mean, recog_logvar = self.encode_posterior(enc_output)
-        #prior_mean, prior_logvar = self.encode_prior(enc_output)
+        prior_mean, prior_logvar = self.encode_prior(enc_output)
         # compute kl
         kl = self.compute_kl(recog_mean, recog_logvar, recog_mean, recog_logvar)
         # derive latent z from mean and logvar
-        mean = recog_mean
-        logvar = recog_logvar
+        mean = recog_mean if training else prior_mean
+        logvar = recog_logvar if training else prior_logvar
         z = self.reparameterize(mean, logvar)
 
         # dec_output.shape == (batch_size, tar_seq_len, d_model)
