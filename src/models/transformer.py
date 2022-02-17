@@ -6,7 +6,7 @@ from src.models.transformer_utils import create_look_ahead_mask, create_padding_
 
 class Transformer(tf.keras.Model):
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-                 target_vocab_size, pe_input, pe_target, rate=0.1, latent="attention", simple_average=False):
+                 target_vocab_size, pe_input, pe_target, rate=0.1):
         super(Transformer, self).__init__()
 
         self.encoder = Encoder(num_layers, d_model, num_heads, dff,
@@ -52,6 +52,24 @@ class Transformer(tf.keras.Model):
         look_ahead_mask = tf.maximum(dec_target_padding_mask, look_ahead_mask)
 
         return enc_padding_mask, look_ahead_mask, dec_padding_mask
+
+class VAETransformer(Transformer):
+    def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
+                 target_vocab_size, pe_input, pe_target, rate=0.1):
+        super(VAETransformer, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
+                                             input_vocab_size=input_vocab_size,
+                                             target_vocab_size=target_vocab_size, pe_input=pe_input,
+                                             pe_target=pe_target, rate=rate)
+
+        self.decoder = VAEDecoder(num_layers=num_layers, d_model=d_model, nul_heads=num_heads, dff=dff,
+                               target_vocab_size=target_vocab_size, pe_target=pe_target, rate=rate)
+
+    def compute_kl(self, prior_mean, prior_logvar, recog_mean, recog_logvar):
+        kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
+                                        - tf.math.divide(tf.pow(prior_mean - recog_mean, 2), tf.exp(prior_logvar))
+                                        - tf.math.divide(tf.exp(recog_logvar), tf.exp(prior_logvar)), axis=-1)
+        return kld
+
 
 
 class VAETransformer(Transformer):

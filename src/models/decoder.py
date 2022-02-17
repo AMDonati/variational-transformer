@@ -75,57 +75,61 @@ class Decoder(tf.keras.layers.Layer):
         # x.shape == (batch_size, target_seq_len, d_model)
         return x, attention_weights
 
+class VAEDecoderLayer(DecoderLayer):
+    def __init__(self, d_model, num_heads, dff, rate=0.1):
+        super(VAEDecoderLayer, self).__init__(d_model=d_model, num_heads=num_heads, dff=dff, rate=rate)
 
-class VAEDecoderLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model, num_heads, dff, rate=0.1, latent="input"):
-        super(VAEDecoderLayer, self).__init__()
+    def call(self, x, enc_output, training,
+             look_ahead_mask, padding_mask):
+        # enc_output.shape == (batch_size, input_seq_len, d_model)
 
-        if latent == "attention":
-            self.mha = PseudoSelfAttention(d_model, num_heads)
+        if training:
+            look_ahead_mask_ = None
         else:
-            self.mha = MultiHeadAttention(d_model, num_heads)
-        self.ffn = point_wise_feed_forward_network(d_model, dff)
+            look_ahead_mask_ = look_ahead_mask
 
-        self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-        self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        attn1, attn_weights_block1 = self.mha1(x, x, x, look_ahead_mask_)  # (batch_size, target_seq_len, d_model)
+        attn1 = self.dropout1(attn1, training=training)
+        out1 = self.layernorm1(attn1 + x)
 
-        self.dropout1 = tf.keras.layers.Dropout(rate)
-        self.dropout2 = tf.keras.layers.Dropout(rate)
+        attn2, attn_weights_block2 = self.mha2(q=out1, k=enc_output, v=enc_output, mask=padding_mask)  # (batch_size, target_seq_len, d_model)
+        attn2 = self.dropout2(attn2, training=training)
+        out2 = self.layernorm2(attn2 + out1)  # (batch_size, target_seq_len, d_model)
 
-    def call(self, query, keys, values, training, mask, z=None):
-        attn_output, attention_weights_block = self.mha(q=query, k=keys, v=values,  mask=mask, z=z)  # (batch_size, input_seq_len, d_model)
-        attn_output = self.dropout1(attn_output, training=training)
-        out1 = self.layernorm1(query + attn_output)  # (batch_size, input_seq_len, d_model)
+        ffn_output = self.ffn(out2)  # (batch_size, target_seq_len, d_model)
+        ffn_output = self.dropout3(ffn_output, training=training)
+        out3 = self.layernorm3(ffn_output + out2)  # (batch_size, target_seq_len, d_model)
 
-        ffn_output = self.ffn(out1)  # (batch_size, input_seq_len, d_model)
-        ffn_output = self.dropout2(ffn_output, training=training)
-        out2 = self.layernorm2(out1 + ffn_output)  # (batch_size, input_seq_len, d_model)
-        return out2, attention_weights_block
+        return out3, attn_weights_block1, attn_weights_block2
+
 
 
 class VAEDecoder(Decoder):
     def __init__(self, num_layers, d_model, num_heads, dff, target_vocab_size,
-                 maximum_position_encoding, rate=0.1, latent="attention"):
+                 maximum_position_encoding, rate=0.1):
         super(VAEDecoder, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff, target_vocab_size=target_vocab_size,
                  maximum_position_encoding=maximum_position_encoding, rate=0.1)
 
-        self.dec_layers = [VAEDecoderLayer(d_model, num_heads, dff, rate, latent=latent)
-                           for _ in range(num_layers)]
-        self.latent = latent
-        if self.latent == "input":
-            self.input_proj = tf.keras.layers.Dense(d_model, use_bias=False)
-        if self.latent == "attention":
-            self.attn_proj = tf.keras.layers.Dense(d_model*num_layers, use_bias=False)
+        self.dec_layers = [VAEDecoderLayer(d_model, num_heads, dff, rate)] + [DecoderLayer(d_model, num_heads, dff, rate)
+                           for _ in range(num_layers - 1)]
 
-    def pseudo_self_attention(self, x, z):
-        # x: shape (batch_size, tar_seq_len, d_model)
-        # z: shape (batch_size, d_model)
-        out = tf.concat([z, x], axis=1)
-        return out
+        self.prior_net = tf.keras.layers.Dense(2 * d_model, name='prior_net')
+        self.posterior_net = tf.keras.layers.Dense(2 * d_model, name='posterior_net')
 
-    def call(self, x, z, training,
-             look_ahead_mask):
-        #TODO: careful the look_ahead mask should be adaptated to eventually add one timestep for the attention latent.
+    def encode_prior(self, x):
+        mean, logvar = tf.split(self.prior_net(x), num_or_size_splits=2, axis=-1)
+        return mean, logvar
+
+    def encode_posterior(self, x):
+        mean, logvar = tf.split(self.posterior_net(x), num_or_size_splits=2, axis=-1)
+        return mean, logvar
+
+    def reparameterize(self, mean, logvar):
+        eps = tf.random.normal(shape=mean.shape)
+        return eps * tf.exp(logvar * .5) + mean
+
+    def call(self, x, enc_output, training,
+             look_ahead_mask, padding_mask):
         seq_len = tf.shape(x)[1]
         attention_weights = {}
 
@@ -133,23 +137,29 @@ class VAEDecoder(Decoder):
         x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
         x += self.pos_encoding[:, :seq_len, :]
 
-        if self.latent == "input":
-            x = x + self.input_proj(z)
-
         x = self.dropout(x, training=training)
 
-        if self.latent == "attention":
-            z = tf.split(self.attn_proj(z), num_or_size_splits=self.num_layers, axis=-1)
+        # variationnal decoder layer:
+        x, block1, block2 = self.dec_layers[0](x, enc_output, training,
+                                               look_ahead_mask, padding_mask)
+        attention_weights['decoder_layer1_block1'] = block1
+        attention_weights['decoder_layer1_block2'] = block2
 
-        for i in range(self.num_layers):
-            if self.latent == "attention":
-                z_i = z[i]
-                x, block = self.dec_layers[i](query=x, keys=x, values=x, z=z_i, training=training, mask=look_ahead_mask)
+        # deriving the latent variable z from x:
+        # compute mean, logvar from prior and posterior
+        recog_mean, recog_logvar = self.encode_posterior(x)
+        prior_mean, prior_logvar = self.encode_prior(x)
 
-            else:
-                x, block = self.dec_layers[i](query=x, keys=x, values=x, training=training, mask=look_ahead_mask)
+        # derive latent z from mean and logvar
+        mean = recog_mean if training else prior_mean
+        logvar = recog_logvar if training else prior_logvar
+        z = self.reparameterize(mean, logvar)
 
-            attention_weights['decoder_layer{}'.format(i + 1)] = block
+        for i in range(1, self.num_layers):
+            z, block1, block2 = self.dec_layers[i](z, enc_output, training,
+                                                   look_ahead_mask, padding_mask)
+            attention_weights['decoder_layer{}_block1'.format(i + 1)] = block1
+            attention_weights['decoder_layer{}_block2'.format(i + 1)] = block2
 
         # x.shape == (batch_size, target_seq_len, d_model)
-        return x, attention_weights
+        return z, attention_weights, (recog_mean, recog_logvar), (prior_mean, prior_logvar)
