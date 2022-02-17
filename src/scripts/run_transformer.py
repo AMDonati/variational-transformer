@@ -53,11 +53,11 @@ def get_parser():
     parser.add_argument("-output_path", type=str, default="output", help="path for output folder")
     parser.add_argument("-save_path", type=str, help="path for saved model folder (if loading ckpt)")
     # inference params.
-    parser.add_argument("-test_samples", type=int, help="number of test samples.")
+    parser.add_argument("-test_samples", type=int, default=5, help="number of test samples.")
     parser.add_argument("-temp", type=float, default=0.7, help="temperature for sampling text.")
     parser.add_argument("-inference_split", type=str, default="test", help="split for doing inference on.")
-    parser.add_argument("-decoding", type=str, default="sampling", help="method to decod text at inference.")
-    parser.add_argument("-debug", type=int, default=0, help="number of test samples.")
+    parser.add_argument("-decoding", type=str, default="sampling", help="method to decode text at inference.")
+    parser.add_argument("-debug", type=int, default=1, help="number of test samples.")
     return parser
 
 

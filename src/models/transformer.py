@@ -98,37 +98,59 @@ class VAETransformer(Transformer):
                                         - tf.math.divide(tf.exp(recog_logvar), tf.exp(prior_logvar)), axis=-1)
         return tf.reduce_mean(kld)
 
+    def create_masks(self, inp, tar, size1=None, size2=None):
+        # Encoder padding mask
+        enc_padding_mask = create_padding_mask(inp)
+        # Used in the 1st attention block in the decoder.
+        # It is used to pad and mask future tokens in the input received by
+        # the decoder.
+        if size1 is None or size2 is None:
+            look_ahead_mask = create_look_ahead_mask(tf.shape(tar)[1], tf.shape(tar)[1])
+        else:
+            look_ahead_mask = create_look_ahead_mask(size1, size2)
+
+        dec_target_padding_mask = create_padding_mask(tar)
+        look_ahead_mask = tf.maximum(dec_target_padding_mask, look_ahead_mask)
+
+        return enc_padding_mask, look_ahead_mask
+
+    def encode(self, encoder_input, targets, training):
+        if self.decoder.latent == "attention":
+            # add a dummy timestep to tar to create masks with the right length for pseudo self-attention:
+            tar_ = tf.concat([tf.ones_like(tf.expand_dims(targets[:, 0], axis=1)), targets], axis=1)
+            enc_padding_mask, look_ahead_mask = self.create_masks(encoder_input,
+                                                                                    tar_, size1=targets.shape[1],
+                                                                                    size2=tar_.shape[1])
+        else:
+            tar_ = targets
+            enc_padding_mask, look_ahead_mask = self.create_masks(encoder_input,
+                                                                                    tar_)
+        enc_output, avg_attn_weights = self.encoder(encoder_input, training,
+                                                    enc_padding_mask)  #
+        return enc_output, avg_attn_weights, look_ahead_mask
+
     def call(self, inputs, training):
         # Keras models prefer if you pass all your inputs in the first argument
         inp, tar = inputs
-        if training:
-            tar = tf.cast(tar, dtype=tf.int64)
-            encoder_input = tf.concat([inp, tar], axis=1)
-        else:
-            encoder_input = inp
+        tar = tf.cast(tar, dtype=inp.dtype)
+        posterior_input = tf.concat([inp, tar], axis=1)
+        prior_input = inp
 
-        if self.decoder.latent == "attention":
-            # add a dummy timestep to tar to create masks with the right length for pseudo self-attention:
-            tar_ = tf.concat([tf.ones_like(tf.expand_dims(tar[:, 0], axis=1)), tar], axis=1)
-            enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input,
-                                                                                    tar_, size1=tar.shape[1],
-                                                                                    size2=tar_.shape[1])
-        else:
-            tar_ = tar
-            enc_padding_mask, look_ahead_mask, dec_padding_mask = self.create_masks(encoder_input,
-                                                                                    tar_)
-        enc_output, avg_attn_weights = self.encoder(encoder_input, training,
-                                  enc_padding_mask)  # (batch_size, inp_seq_len, d_model)
+        posterior_output, post_attn_weights, look_ahead_mask = self.encode(encoder_input=posterior_input, targets=tar, training=training)
+        prior_output, prior_attn_weights, look_ahead_mask2 = self.encode(
+            encoder_input=prior_input, targets=tar, training=training)
 
         # compute mean, logvar from prior and posterior
-        recog_mean, recog_logvar = self.encode_posterior(enc_output)
-        prior_mean, prior_logvar = self.encode_prior(enc_output)
+        recog_mean, recog_logvar = self.encode_posterior(posterior_output)
+        prior_mean, prior_logvar = self.encode_prior(prior_output)
         # compute kl
-        kl = self.compute_kl(recog_mean, recog_logvar, recog_mean, recog_logvar)
+        kl = self.compute_kl(prior_mean, prior_logvar, recog_mean, recog_logvar)
+
         # derive latent z from mean and logvar
         mean = recog_mean if training else prior_mean
         logvar = recog_logvar if training else prior_logvar
         z = self.reparameterize(mean, logvar)
+        avg_attn_weights = post_attn_weights if training else prior_attn_weights
 
         # dec_output.shape == (batch_size, tar_seq_len, d_model)
         dec_output, attention_weights = self.decoder(
