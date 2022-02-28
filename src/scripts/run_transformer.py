@@ -3,7 +3,7 @@ from src.data_provider.ROCDataset import ROCDataset
 from src.models.transformer import Transformer, VAETransformer
 from src.train.train_transformer import train, train_VAE
 from src.train.utils import CustomSchedule, get_checkpoints, get_klweights
-from src.eval.eval import inference
+from src.eval.eval import inference, inference_multisentence
 import tensorflow as tf
 import os
 import datetime
@@ -219,17 +219,29 @@ def run(args):
         dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
     text_df.to_csv(os.path.join(inference_path, "texts_{}.csv".format(args.inference_split)))
     if args.debug:
+        print("debugging text generation using posterior distribution")
         inputs_, targets_, preds_ = inference(transformer=transformer, test_dataset=inference_dataset,
                                            start_token=start_token,
                                            temp=args.temp, test_samples=args.test_samples, logger=logger, training=True, decoding=args.decoding)
         text_inputs_ = dataset.tokenizer.decode_batch(inputs_.numpy())
-        #text_preds_ = dataset.tokenizer.decode_batch(preds_.numpy(), ignored=[], stop_at_end=False)
         text_preds_ = dataset.tokenizer.decode_batch(preds_.numpy())
         text_targets_ = dataset.tokenizer.decode_batch(targets_.numpy())
         text_df_posterior = pd.DataFrame.from_records(
             dict(zip(["inputs", "targets", "preds"], [text_inputs_, text_targets_, text_preds_])))
         text_df_posterior.to_csv(
             os.path.join(inference_path, "texts_{}_posterior.csv".format(args.inference_split)))
+
+    # generating multiple sentences per input for evaluating selfbleu
+    print("generating multiple sentences per input for evaluating self-bleu")
+    inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=inference_dataset, start_token=start_token,
+                                       temp=args.temp, test_samples=1)
+    text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
+    text_preds = dataset.tokenizer.decode_batch(preds.numpy())
+    text_targets = dataset.tokenizer.decode_batch(targets.numpy())
+    text_df = pd.DataFrame.from_records(
+        dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
+    text_df.to_csv(os.path.join(inference_path, "texts_multi_{}.csv".format(args.inference_split)))
+
 if __name__ == '__main__':
     parser = get_parser()
     args = parser.parse_args()

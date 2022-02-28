@@ -17,6 +17,7 @@ def get_parser():
     # parser.add_argument('-bottom_folder', type=int, default=1)
     # parser.add_argument('-top_folder', type=int, default=1)
     parser.add_argument('-precision', type=int, default=2)
+    parser.add_argument('-test_scores', type=int, default=0)
     return parser
 
 
@@ -84,8 +85,9 @@ def compute_test_metrics(texts):
     return pd.DataFrame.from_records(test_scores, index=["scores"])
 
 
-def merge_one_experiment(path="output/temp", precision=4, to_remove="var_bleu", inference_prefix="test"):
-    dirs = [f.path for f in os.scandir(path) if f.is_dir()]
+def merge_one_experiment(args):
+        #path="output/temp", precision=4, to_remove="var_bleu", inference_prefix="test"):
+    dirs = [f.path for f in os.scandir(args.path) if f.is_dir()]
     merge_metrics = pd.DataFrame()
     merge_scores = pd.DataFrame()
     texts = {}
@@ -104,26 +106,30 @@ def merge_one_experiment(path="output/temp", precision=4, to_remove="var_bleu", 
                                                              path=exp_path))
             metrics = pd.concat([metrics, best_val_loss], axis=1)
             metrics_all_runs.append(metrics)
-            text = pd.read_csv(os.path.join(dir_experiment, "inference", "texts_{}.csv".format(inference_prefix)))
-            test_scores = compute_test_metrics(text)
+            text = pd.read_csv(os.path.join(dir_experiment, "inference", "texts_{}.csv".format(args.inference_prefix)))
+            if args.test_scores:
+                test_scores = compute_test_metrics(text)
         if len(dirs) > 1:
             metrics_all_runs = pd.concat(metrics_all_runs)
-            metrics = metrics_all_runs.mean(axis=0).apply(lambda t: round(t, precision), axis=1)
+            metrics = metrics_all_runs.mean(axis=0).apply(lambda t: round(t, args.precision), axis=1)
             std_metrics = metrics_all_runs.std(axis=0).apply(lambda t: round(t, 3), axis=1)
         else:
-            metrics = metrics_all_runs[-1].apply(lambda t: round(t, precision), axis=1)
+            metrics = metrics_all_runs[-1].apply(lambda t: round(t, args.precision), axis=1)
         metrics.to_csv(os.path.join(dir_conf, "all_metrics.csv"))
-        test_scores.to_csv(os.path.join(dir_conf, "test_scores.csv"))
+        if args.test_scores:
+            test_scores.to_csv(os.path.join(dir_conf, "test_scores.csv"))
         merge_metrics[os.path.basename(dir_conf)] = metrics.T.squeeze()
         texts[os.path.basename(dir_conf)] = text
-        merge_scores[os.path.basename(dir_conf)] = test_scores.T.squeeze()
+        if args.test_scores:
+            merge_scores[os.path.basename(dir_conf)] = test_scores.T.squeeze()
     merge_texts_1 = texts[list(texts.keys())[0]][["inputs", "targets"]]
     texts_ = {k: v["preds"] for k, v in texts.items()}
     merge_texts_2 = pd.DataFrame.from_records(texts_)
     merge_texts = pd.concat([merge_texts_1, merge_texts_2], axis=1)
-    merge_metrics.to_csv(os.path.join(path, "merge_metrics.csv"))
-    merge_scores.to_csv(os.path.join(path, "merge_scores.csv"))
-    merge_texts.to_csv(os.path.join(path, "merge_texts.csv"))
+    merge_metrics.to_csv(os.path.join(args.path, "merge_metrics.csv"))
+    if args.test_scores:
+        merge_scores.to_csv(os.path.join(args.path, "merge_scores.csv"))
+    merge_texts.to_csv(os.path.join(args.path, "merge_texts.csv"))
     # if to_remove in merge_metrics.index:
     # merge_metrics = merge_metrics.drop(to_remove, axis=0)
     # merge_metrics_latex = merge_metrics.apply(lambda t: t.replace('+/-', '\pm'))
@@ -131,15 +137,14 @@ def merge_one_experiment(path="output/temp", precision=4, to_remove="var_bleu", 
     merge_metrics_latex.columns = [col.replace('_', '-') for col in merge_metrics_latex.columns]
     merge_metrics_latex.index = [ind.replace('_', '-') for ind in merge_metrics_latex.index]
     merge_metrics_latex = merge_metrics_latex.T
-    merge_metrics_latex.to_latex(os.path.join(path, "merge_metrics.txt"))
+    merge_metrics_latex.to_latex(os.path.join(args.path, "merge_metrics.txt"))
 
 
 
 if __name__ == '__main__':
     parser = get_parser()
     args = parser.parse_args()
-    merge_one_experiment(path=args.path, precision=args.precision, to_remove=args.to_remove,
-                         inference_prefix=args.inference_prefix)
+    merge_one_experiment(args)
 
 
     # bleu_metric = load_metric('google_bleu')
