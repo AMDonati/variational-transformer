@@ -29,3 +29,4 @@ def gpt2_perplexity_batch(sentences):
     loss = ce(y_true=labels, y_pred=preds_logits)
     ppl = tf.exp(tf.reduce_mean(loss, axis=-1))
     return tf.reduce_mean(ppl).numpy()
+
