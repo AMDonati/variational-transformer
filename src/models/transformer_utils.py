@@ -57,34 +57,34 @@ def point_wise_feed_forward_network(d_model, dff):
         tf.keras.layers.Dense(d_model)  # (batch_size, seq_len, d_model)
     ])
 
-#def plot_attention_head(in_tokens, attention, tokenizer, out_file):
-    # remove zero elements from attenion_weights:
-    #attention_ = attention[attention != 0]
-    #ax = plt.gca()
-    #ax.matshow(attention_[tf.newaxis,:])
-    #labels = tokenizer.decode(in_tokens.numpy(), ignored=["<PAD>"], stop_at_end=False).split(" ")
-    #ax.set_xticks(range(len(labels)))
-     # TODO: Keep <SOS> and <EOS> tokens.
-    #ax.set_xticklabels(
-      #labels, rotation=90)
-    #plt.savefig(out_file)
-
-def plot_attention_head(in_tokens, translated_tokens, attention):
-  # The plot is of the attention when a token was generated.
-  # The model didn't generate `<START>` in the output. Skip it.
-  translated_tokens = translated_tokens[1:]
-
-  ax = plt.gca()
-  ax.matshow(attention)
-  ax.set_xticks(range(len(in_tokens)))
-  ax.set_yticks(range(len(translated_tokens)))
-
-  labels = [label.decode('utf-8') for label in in_tokens.numpy()]
-  ax.set_xticklabels(
+def plot_attention_head(in_tokens, attention, tokenizer, out_file):
+    #remove zero elements from attention_weights:
+    attention_ = attention[attention != 0]
+    ax = plt.gca()
+    ax.matshow(attention_[tf.newaxis,:])
+    labels = tokenizer.decode(in_tokens.numpy(), ignored=["<PAD>"], stop_at_end=False).split(" ")
+    ax.set_xticks(range(len(labels)))
+     #TODO: Keep <SOS> and <EOS> tokens.
+    ax.set_xticklabels(
       labels, rotation=90)
+    plt.savefig(out_file)
 
-  labels = [label.decode('utf-8') for label in translated_tokens.numpy()]
-  ax.set_yticklabels(labels)
+# def plot_attention_head(in_tokens, translated_tokens, attention):
+#   # The plot is of the attention when a token was generated.
+#   # The model didn't generate `<START>` in the output. Skip it.
+#   translated_tokens = translated_tokens[1:]
+#
+#   ax = plt.gca()
+#   ax.matshow(attention)
+#   ax.set_xticks(range(len(in_tokens)))
+#   ax.set_yticks(range(len(translated_tokens)))
+#
+#   labels = [label.decode('utf-8') for label in in_tokens.numpy()]
+#   ax.set_xticklabels(
+#       labels, rotation=90)
+#
+#   labels = [label.decode('utf-8') for label in translated_tokens.numpy()]
+#   ax.set_yticklabels(labels)
 
 
 
