@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-def scaled_dot_product_attention(q, k, v, mask, non_linearity=False, scale=True, temperature=0.5, subset=10):
+def scaled_dot_product_attention(q, k, v, mask, non_linearity=False, scale=True, temperature=0.5, subsize=10):
     """Calculate the attention weights.
     q, k, v must have matching leading dimensions.
     k, v must have matching penultimate dimension, i.e.: seq_len_k = seq_len_v.
@@ -17,27 +17,9 @@ def scaled_dot_product_attention(q, k, v, mask, non_linearity=False, scale=True,
     Returns:
       output, attention_weights
     """
-
-    matmul_qk = tf.matmul(q, k, transpose_b=True)  # (..., seq_len_q, seq_len_k)
-
-    if scale:
-        # scale matmul_qk
-        dk = tf.cast(tf.shape(k)[-1], tf.float32)
-        scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
-    else:
-        scaled_attention_logits = matmul_qk
-
-    if non_linearity:
-        scaled_attention_logits = tf.keras.activations.gelu(scaled_attention_logits)
-
-    # add the mask to the scaled tensor.
-    if mask is not None:
-        scaled_attention_logits += (mask * -1e9)
-
-        # softmax is normalized on the last axis (seq_len_k) so that the scores
-    # add up to 1.
+    scaled_attention_logits = compute_attention_logits(q=q, k=k, v=v, mask=mask, non_linearity=non_linearity, scale=scale)
+   # softmax is normalized on the last axis (seq_len_k) so that the scores add up to 1.
     attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)  # (..., seq_len_q, seq_len_k)
-
     output = tf.matmul(attention_weights, v)  # (..., seq_len_q, depth_v)
 
     return output, attention_weights
@@ -119,14 +101,14 @@ def compute_relaxed_subsampling(attention_logits, subsize=10, temperature=0.5):
     return relaxed_topks
 
 def relaxed_topk(r_keys, subsize=10, temperature=0.5):
-    alpha = r_keys
-    relaxed_topks = [tf.nn.softmax(r_keys/temperature)] # initialization
+    alpha = tf.squeeze(r_keys, axis=-2)
+    relaxed_topks = [tf.nn.softmax(alpha/temperature)] # initialization
     for j in range(subsize-1):
         alpha = alpha + tf.math.log(1-tf.nn.softmax(alpha/temperature))
         relaxed_topks.append(tf.nn.softmax(alpha/temperature))
     relaxed_topks = tf.stack(relaxed_topks, axis=0) # shape (k, batch_size, 1, num_timesteps)
-    out = tf.reduce_sum(relaxed_topks, axis=0)
-    return out
+    out = tf.reduce_sum(relaxed_topks, axis=0) # shape (batch_size, 1, num_timesteps)
+    return out[:,:,:,tf.newaxis]
 
 class MultiHeadAttention(tf.keras.layers.Layer):
     def __init__(self, d_model, num_heads, non_linearity=False, scale=True):
