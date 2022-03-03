@@ -3,7 +3,7 @@ from src.data_provider.ROCDataset import ROCDataset
 from src.models.transformer import Transformer, VAETransformer
 from src.train.train_transformer import train, train_VAE
 from src.train.utils import CustomSchedule, get_checkpoints, get_klweights
-from src.eval.eval import inference
+from src.eval.eval import inference, inference_multisentence
 import tensorflow as tf
 import os
 import datetime
@@ -35,8 +35,12 @@ def get_parser():
     parser.add_argument("-pe", type=int, default=1000, help="maximum positional encoding")
     parser.add_argument("-p_drop", type=float, default=0.1, help="dropout on output layer")
     # VAE Transformer params:
-    parser.add_argument("-latent", type=str, default="attention", help="where to inject the latent in the VAE transformer")
-    parser.add_argument("-beta_schedule", type=str, default="linear", help="schedule for KL annealing (linear or linear with warm-up")
+    parser.add_argument("-latent", type=str, default="attention",
+                        help="where to inject the latent in the VAE transformer")
+    parser.add_argument("-simple_average", type=int, default=0,
+                        help="simple average or average attention in the VAE encoder.")
+    parser.add_argument("-beta_schedule", type=str, default="linear",
+                        help="schedule for KL annealing (linear or linear with warm-up")
     parser.add_argument("-n_cycle", type=int, default=1,
                         help="number of cyclic schedule for KL annealing.")
     parser.add_argument("-beta_stop", type=float, default=1.,
@@ -51,7 +55,9 @@ def get_parser():
     # inference params.
     parser.add_argument("-test_samples", type=int, help="number of test samples.")
     parser.add_argument("-temp", type=float, default=0.7, help="temperature for sampling text.")
-
+    parser.add_argument("-inference_split", type=str, default="test", help="split for doing inference on.")
+    parser.add_argument("-decoding", type=str, default="sampling", help="method to decode text at inference.")
+    parser.add_argument("-debug", type=int, default=1, help="number of test samples.")
     return parser
 
 
@@ -102,19 +108,23 @@ def create_ckpt_path(args, out_path):
 
 def create_out_path(args):
     if args.save_path is not None:
-        return args.save_path
+        datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        output_folder = os.path.join(args.save_path, datetime_folder)
     else:
         out_file = '{}_{}L_d{}_dff{}_pe{}_bs{}_pdrop{}'.format(args.model, args.num_layers, args.d_model, args.dff,
                                                                args.pe,
                                                                args.bs,
                                                                args.p_drop)
         if args.model == "VAE":
-            out_file = out_file + "_{}".format(args.latent) + "_{}{}-{}".format(args.beta_schedule, args.n_cycle, args.beta_stop)
+            out_file = out_file + "_{}".format(args.latent) + "_{}{}-{}".format(args.beta_schedule, args.n_cycle,
+                                                                                args.beta_stop)
+            if args.simple_average:
+                out_file = out_file + "_simpleavg"
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
-        if not os.path.isdir(output_folder):
-            os.makedirs(output_folder)
-        return output_folder
+    if not os.path.isdir(output_folder):
+        os.makedirs(output_folder)
+    return output_folder
 
 
 def plot_results(results, out_path, train_key="train_loss", val_key="val_loss"):
@@ -134,6 +144,7 @@ def plot_results(results, out_path, train_key="train_loss", val_key="val_loss"):
         va = "top"
     fig.savefig(os.path.join(out_path, "loss_plot.png"))
 
+
 def run(args):
     # Create out path & logger & config.json file
     out_path = create_out_path(args)
@@ -151,7 +162,7 @@ def run(args):
     transformer = models[args.model](
         num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, dff=args.dff,
         input_vocab_size=vocab_size, target_vocab_size=vocab_size,
-        pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop)
+        pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop, simple_average=args.simple_average)
 
     # Train Transformer
     learning_rate = CustomSchedule(args.d_model)
@@ -162,27 +173,37 @@ def run(args):
     checkpoint_path = create_ckpt_path(args, out_path)
     ckpt_manager = get_checkpoints(transformer, optimizer, checkpoint_path)
 
-    # get range of kl_weights for KL annealing in VAE training:
-    n_iter = args.ep * len(train_dataset)
-    range_klweights = get_klweights(beta_schedule=args.beta_schedule, n_cycle=args.n_cycle, n_iter=n_iter, beta_stop=args.beta_stop)
+    if args.ep > 0:
+        # get range of kl_weights for KL annealing in VAE training:
+        n_iter = args.ep * len(train_dataset)
+        range_klweights = get_klweights(beta_schedule=args.beta_schedule, n_cycle=args.n_cycle, n_iter=n_iter,
+                                        beta_stop=args.beta_stop)
 
-    results = train_fn[args.model](EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset,
-                                   transformer=transformer,
-                                   optimizer=optimizer, loss_object=loss_object, ckpt_manager=ckpt_manager,
-                                   logger=logger, train_writer=train_writer, val_writer=val_writer, range_klweights=range_klweights)
-    results["train_ppl"] = np.exp(results[train_losses[args.model]])
-    results["val_ppl"] = np.exp(results[val_losses[args.model]])
-    # save results
-    df_results = pd.DataFrame.from_records(results)
-    df_results.to_csv(os.path.join(out_path, "train_history.csv"))
-    # plot_results
-    (train_key, val_key) = ("train_loss", "val_loss") if args.model == "transformer" else ("train_ce_loss", "val_ce_loss")
-    plot_results(results, out_path, train_key, val_key)
+        results = train_fn[args.model](EPOCHS=args.ep, train_dataset=train_dataset, val_dataset=val_dataset,
+                                       transformer=transformer,
+                                       optimizer=optimizer, loss_object=loss_object, ckpt_manager=ckpt_manager,
+                                       logger=logger, train_writer=train_writer, val_writer=val_writer,
+                                       range_klweights=range_klweights, tokenizer=dataset.tokenizer, out_path=out_path)
+        results["train_ppl"] = np.exp(results[train_losses[args.model]])
+        results["val_ppl"] = np.exp(results[val_losses[args.model]])
+        # save results
+        df_results = pd.DataFrame.from_records(results)
+        df_results.to_csv(os.path.join(out_path, "train_history.csv"))
+        # plot_results
+        (train_key, val_key) = ("train_loss", "val_loss") if args.model == "transformer" else (
+        "train_ce_loss", "val_ce_loss")
+        plot_results(results, out_path, train_key, val_key)
 
     # generate text at inference
+    if args.inference_split == "test":
+        inference_dataset = test_dataset
+    elif args.inference_split == "val":
+        inference_dataset = val_dataset
+    elif args.inference_split == "train":
+        inference_dataset = train_dataset
     start_token = dataset.vocab["<SOS>"]
-    inputs, targets, preds = inference(transformer=transformer, test_dataset=test_dataset, start_token=start_token,
-                                       temp=args.temp, test_samples=args.test_samples, logger=logger)
+    inputs, targets, preds = inference(transformer=transformer, test_dataset=inference_dataset, start_token=start_token,
+                                       temp=args.temp, test_samples=args.test_samples, logger=logger, decoding=args.decoding)
     inference_path = os.path.join(out_path, "inference")
     if not os.path.isdir(inference_path):
         os.makedirs(inference_path)
@@ -191,12 +212,35 @@ def run(args):
         f.create_dataset('targets', data=targets)
         f.create_dataset('preds', data=preds)
     text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
+    #text_preds = dataset.tokenizer.decode_batch(preds.numpy(), ignored=[], stop_at_end=False)
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())
     text_df = pd.DataFrame.from_records(
         dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
-    text_df.to_csv(os.path.join(inference_path, "texts.csv"))
+    text_df.to_csv(os.path.join(inference_path, "texts_{}.csv".format(args.inference_split)))
+    if args.debug:
+        print("debugging text generation using posterior distribution")
+        inputs_, targets_, preds_ = inference(transformer=transformer, test_dataset=inference_dataset,
+                                           start_token=start_token,
+                                           temp=args.temp, test_samples=args.test_samples, logger=logger, training=True, decoding=args.decoding)
+        text_inputs_ = dataset.tokenizer.decode_batch(inputs_.numpy())
+        text_preds_ = dataset.tokenizer.decode_batch(preds_.numpy())
+        text_targets_ = dataset.tokenizer.decode_batch(targets_.numpy())
+        text_df_posterior = pd.DataFrame.from_records(
+            dict(zip(["inputs", "targets", "preds"], [text_inputs_, text_targets_, text_preds_])))
+        text_df_posterior.to_csv(
+            os.path.join(inference_path, "texts_{}_posterior.csv".format(args.inference_split)))
 
+    # generating multiple sentences per input for evaluating selfbleu
+    print("generating multiple sentences per input for evaluating self-bleu")
+    inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=inference_dataset, start_token=start_token,
+                                       temp=args.temp, test_samples=10)
+    text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
+    text_preds = dataset.tokenizer.decode_batch(preds.numpy())
+    text_targets = dataset.tokenizer.decode_batch(targets.numpy())
+    text_df = pd.DataFrame.from_records(
+        dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
+    text_df.to_csv(os.path.join(inference_path, "texts_multi_{}.csv".format(args.inference_split)))
 
 if __name__ == '__main__':
     parser = get_parser()
@@ -214,7 +258,7 @@ if __name__ == '__main__':
 
 
 # beta cycling schedule.
-#Specifically, we use the cyclical schedule to anneal β for 10 periods (Fu et al., 2019).
+# Specifically, we use the cyclical schedule to anneal β for 10 periods (Fu et al., 2019).
 # Within one period, there are three consecutive stages: Training AE (β = 0) for 0.5 proportion,
 # annealing β from 0 to 1 for 0.25 proportion, and fixing β = 1 for 0.25 proportion.
 
