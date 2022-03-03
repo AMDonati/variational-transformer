@@ -234,7 +234,7 @@ def run(args):
     # generating multiple sentences per input for evaluating selfbleu
     print("generating multiple sentences per input for evaluating self-bleu")
     inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=inference_dataset, start_token=start_token,
-                                       temp=args.temp, test_samples=1)
+                                       temp=args.temp, test_samples=10)
     text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())

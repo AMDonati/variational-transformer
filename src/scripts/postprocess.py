@@ -127,6 +127,7 @@ def merge_one_experiment(args):
                 if os.path.exists(text_multi_path):
                     texts_multi = pd.read_csv(text_multi_path)
                     selfbleu = compute_selfbleu(texts_multi)
+                    print("self bleu", selfbleu)
                     test_scores["selfbleu"] = selfbleu
         if len(dirs) > 1:
             metrics_all_runs = pd.concat(metrics_all_runs)
