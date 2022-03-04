@@ -1,6 +1,6 @@
 import argparse
 from src.data_provider.ROCDataset import ROCDataset
-from src.models.transformer import Transformer, VAETransformer
+from src.models.transformer import Transformer, VAETransformer, d_VAETransformer
 from src.train.train_transformer import train, train_VAE
 from src.train.utils import CustomSchedule, get_checkpoints, get_klweights
 from src.eval.eval import inference, inference_multisentence
@@ -14,10 +14,10 @@ import numpy as np
 import json
 import h5py
 
-models = {"transformer": Transformer, "VAE": VAETransformer}
-train_fn = {"transformer": train, "VAE": train_VAE}
-train_losses = {"transformer": "train_loss", "VAE": "train_ce_loss"}  # to compute ppl.
-val_losses = {"transformer": "val_loss", "VAE": "val_ce_loss"}
+models = {"transformer": Transformer, "VAE": VAETransformer, "d_VAE": d_VAETransformer}
+train_fn = {"transformer": train, "VAE": train_VAE, "d_VAE": train_VAE}
+train_losses = {"transformer": "train_loss", "VAE": "train_ce_loss", "d_VAE": "train_ce_loss"}  # to compute ppl.
+val_losses = {"transformer": "val_loss", "VAE": "val_ce_loss", "d_VAE": "val_ce_loss"}
 
 
 def get_parser():
@@ -26,7 +26,7 @@ def get_parser():
     # parser.add_argument("-data_path", type=str, required=True, help="path for uploading the dataset")
     parser.add_argument("-max_samples", type=int, help="max samples for train dataset")
     # model parameters:
-    parser.add_argument("-model", type=str, default="transformer", help="model: transformer or VAE for now.")
+    parser.add_argument("-model", type=str, default="transformer", help="model: transformer or VAE or d_VAE.")
     parser.add_argument("-num_layers", type=int, default=1,
                         help="number of layers in the network.")
     parser.add_argument("-num_heads", type=int, default=1, help="number of attention heads for Transformer networks")
@@ -158,7 +158,7 @@ def run(args):
     train_dataset, val_dataset, test_dataset = dataset.data_to_dataset(train_data, val_data, test_data)
     vocab_size = len(dataset.vocab)
 
-    # Create Transformer
+    # Create Transformer #TODO: for the d_VAE model: two more parameters: subsize, loss_samples.
     transformer = models[args.model](
         num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, dff=args.dff,
         input_vocab_size=vocab_size, target_vocab_size=vocab_size,
@@ -193,6 +193,8 @@ def run(args):
         (train_key, val_key) = ("train_loss", "val_loss") if args.model == "transformer" else (
         "train_ce_loss", "val_ce_loss")
         plot_results(results, out_path, train_key, val_key)
+
+    #TODO: solve problem at inference for d_VAE transformer ? In encoder: tensorflow.python.framework.errors_impl.InvalidArgumentError: indices[0,24] = 20110 is not in [0, 20110) [Op:ResourceGather]
 
     # generate text at inference
     if args.inference_split == "test":

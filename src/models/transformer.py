@@ -175,15 +175,15 @@ class VAETransformer(Transformer):
 class d_VAETransformer(VAETransformer):
     '''has same call function than the VAETransformer. Only the VAE loss and the Encoder model change.'''
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-                 target_vocab_size, pe_input, pe_target, rate=0.1, latent="attention", subsize=10, samples_loss=10):
+                 target_vocab_size, pe_input, pe_target, rate=0.1, latent="attention", simple_average=False, subsize=10, samples_loss=10):
         super(d_VAETransformer, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                                input_vocab_size=input_vocab_size,
                                                target_vocab_size=target_vocab_size, pe_input=pe_input,
-                                               pe_target=pe_target, rate=rate, latent=latent)
+                                               pe_target=pe_target, rate=rate, latent=latent, simple_average=False)
 
         self.encoder = d_VAEEncoder(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                     input_vocab_size=input_vocab_size, maximum_position_encoding=pe_input, rate=rate,
-                                    subsize=subsize)
+                                    subsize=subsize, simple_average=False)
         self.samples_loss = samples_loss
 
     def compute_vae_loss(self, recog_mean, recog_logvar, **kwargs):
@@ -206,8 +206,8 @@ class d_VAETransformer(VAETransformer):
             prob_m = gauss_distrib_m.prob(z)  # shape (batch_size, 1)
             prior_probs.append(prob_m)
         sum_prior_density = tf.reduce_sum(tf.stack(prior_probs, axis=0), axis=0)  # shape (batch_size, 1)
-
         # sample from posterior one more time (here K=2)
+        tar = tf.cast(tar, dtype=inp.dtype)
         encoder_input = tf.concat([inp, tar], axis=1)
         enc_padding_mask = create_padding_mask(encoder_input)
         enc_output_posterior, _ = self.encoder(encoder_input, training=True, mask=enc_padding_mask,
@@ -217,16 +217,13 @@ class d_VAETransformer(VAETransformer):
         std_posterior = tf.exp(logvar_posterior * 0.5)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=mean_posterior, scale_diag=std_posterior)
         prob_posterior = gauss_distrib.prob(z)  # shape (batch_size, 1)
-
         # compute initial gaussian density from z, recog_mean, recog_logvar:
         recog_std = tf.exp(recog_logvar * 0.5)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=recog_mean, scale_diag=recog_std)
         recog_prob = gauss_distrib.prob(z)  # shape (batch_size, 1)
-
         # sum-up all posterior densities:
         sum_posterior_density = recog_prob + recog_prob + prob_posterior
-
-        # return log (K+1/M) sum_prior_densities - log sum_posterior_densities
+        # return log [(K+1/M) sum_prior_densities] - log sum_posterior_densities
         log_loss = tf.math.log((3 / self.samples_loss) * sum_prior_density) - tf.math.log(sum_posterior_density)
         return tf.reduce_mean(log_loss)
 

@@ -100,10 +100,10 @@ class VAEEncoder(Encoder):
 
 class d_VAEEncoder(VAEEncoder):
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-                 maximum_position_encoding, rate=0., subsize=10):
+                 maximum_position_encoding, rate=0., simple_average=False, subsize=10):
         super(d_VAEEncoder, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                            input_vocab_size=input_vocab_size,
-                                           maximum_position_encoding=maximum_position_encoding, rate=rate)
+                                           maximum_position_encoding=maximum_position_encoding, rate=rate, simple_average=simple_average)
         self.subsize = subsize
         self.average_attention = Stochastic_MHA(d_model=d_model, num_heads=1, non_linearity=True, scale=False,
                                                 subsize=subsize)

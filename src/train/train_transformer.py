@@ -1,7 +1,7 @@
 import tensorflow as tf
 import time
-from src.train.utils import CustomSchedule, get_checkpoints, loss_function, accuracy_function, write_to_tensorboard, write_to_tensorboard_baseline
-from src.models.transformer import Transformer, VAETransformer
+from src.train.utils import CustomSchedule, get_checkpoints, loss_function, accuracy_function, write_to_tensorboard, write_to_tensorboard_baseline, get_klweights
+from src.models.transformer import Transformer, VAETransformer, d_VAETransformer
 from src.models.transformer_utils import plot_attention_head
 import os
 
@@ -43,7 +43,6 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, kl_weights):
         predictions, attn_weights, kl_loss, (mean, logvar) = transformer((inp, tar_inp),
                                               True)
         ce_loss = loss_function(tar_real, predictions, loss_object)
-        #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
         loss = ce_loss + kl_weights * kl_loss
 
     gradients = tape.gradient(loss, transformer.trainable_variables)
@@ -74,7 +73,6 @@ def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
                                           True)
     ce_loss = loss_function(tar_real, predictions, loss_object)
     ce_loss_posterior = loss_function(tar_real, predictions_posterior, loss_object)
-    #kl_weights = tf.minimum(tf.cast(global_step, tf.float32) / 20000, 1.0)
     loss = ce_loss + kl_weights * kl_loss
     accuracy = accuracy_function(tar_real, predictions)
     return (loss, ce_loss, kl_loss), accuracy, attn_weights, ce_loss_posterior, (mean, logvar), (mean_p, logvar_p)
@@ -168,7 +166,10 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
         val_loss_epoch, val_ce_loss_epoch, val_kl_loss_epoch, val_accuracy_epoch = 0., 0., 0., 0.
 
         for (batch, (inp, tar)) in enumerate(train_dataset):
-            kl_weights = tf.constant(range_klweights[global_step], dtype=tf.float32)
+            if transformer.__class__ == d_VAETransformer:
+                kl_weights = tf.constant(1., dtype=tf.float32)
+            else:
+                kl_weights = tf.constant(range_klweights[global_step], dtype=tf.float32)
             (loss, ce_loss, kl_loss), accuracy_batch, attn_weights, kl_weights, (mean, logvar) = train_step_vae(inp, tar, transformer, optimizer,
                                                                                   loss_object, kl_weights)
             # get learnable_query:
@@ -187,10 +188,16 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             accuracy_epoch += accuracy_batch
             global_step += 1
 
-            if batch == 0 and not transformer.simple_average:
+            if batch == 0 and not transformer.simple_average and tokenizer is not None:
                 out_file = os.path.join(graph_path, "attention_map_train_ep{}.png".format(epoch))
                 in_tokens = tf.concat([inp, tar], axis=1)[0] #take first sample of first batch.
-                plot_attention_head(in_tokens, tf.squeeze(attn_weights[0]), tokenizer, out_file) # attn_weights[0] of shape (1,1,seq_len)
+                if type(attn_weights) == tuple:
+                    attention_weights, initial_attention_weights = attn_weights
+                    out_file_initial = os.path.join(graph_path, "initial_attention_map_train_ep{}.png".format(epoch))
+                    plot_attention_head(in_tokens, tf.squeeze(attention_weights[0]), tokenizer, out_file)
+                    plot_attention_head(in_tokens, tf.squeeze(initial_attention_weights[0]), tokenizer, out_file_initial)
+                else:
+                    plot_attention_head(in_tokens, tf.squeeze(attn_weights[0]), tokenizer, out_file) # attn_weights[0] of shape (1,1,seq_len)
 
 
         for key, val in zip(["train_loss", "train_ce_loss", "train_kl_loss", "train_accuracy"],
@@ -210,10 +217,16 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             val_accuracy_epoch += val_accuracy
             global_step_val += 1
 
-            if batch_val == 0 and not transformer.simple_average:
+            if batch_val == 0 and not transformer.simple_average and tokenizer is not None:
                 out_file = os.path.join(graph_path, "attention_map_val_ep{}.png".format(epoch))
                 in_tokens = inp[0] #take first sample of first batch.
-                plot_attention_head(in_tokens, tf.squeeze(attn_weights[0]), tokenizer, out_file)
+                if type(attn_weights) == tuple:
+                    attention_weights, initial_attention_weights = attn_weights
+                    out_file_initial = os.path.join(graph_path, "initial_attention_map_val_ep{}.png".format(epoch))
+                    plot_attention_head(in_tokens, tf.squeeze(attention_weights[0]), tokenizer, out_file)
+                    plot_attention_head(in_tokens, tf.squeeze(initial_attention_weights[0]), tokenizer, out_file_initial)
+                else:
+                    plot_attention_head(in_tokens, tf.squeeze(attn_weights[0]), tokenizer, out_file)
 
         for key, val in zip(["val_loss", "val_ce_loss", "val_kl_loss", "val_accuracy"],
                             [val_loss_epoch, val_ce_loss_epoch, val_kl_loss_epoch,
@@ -230,8 +243,6 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
             best_val_loss = metrics["val_ce_loss"][-1]
             ckpt_save_path = ckpt_manager.save()
             print('Saving checkpoint for epoch {} at {}'.format(epoch + 1, ckpt_save_path))
-        #ckpt_save_path = ckpt_manager.save()
-
 
         if logger is None:
             print('Epoch: {}'.format(epoch + 1))
@@ -289,8 +300,8 @@ if __name__ == '__main__':
 
     ckpt_manager = get_checkpoints(transformer, optimizer, checkpoint_path)
 
-    results = train(EPOCHS=EPOCHS, train_dataset=tfdataloader, val_dataset=tfdataloader, ckpt_manager=ckpt_manager,
-                    transformer=transformer, optimizer=optimizer, loss_object=loss_object)
+    # results = train(EPOCHS=EPOCHS, train_dataset=tfdataloader, val_dataset=tfdataloader, ckpt_manager=ckpt_manager,
+    #                 transformer=transformer, optimizer=optimizer, loss_object=loss_object)
     print("done for basic transformer")
 
     vae_transformer = VAETransformer(
@@ -307,8 +318,28 @@ if __name__ == '__main__':
 
     ckpt_manager = get_checkpoints(vae_transformer, optimizer, checkpoint_path)
 
-    vae_results = train_VAE(EPOCHS=EPOCHS, train_dataset=tfdataloader, val_dataset=tfdataloader,
-                            ckpt_manager=ckpt_manager,
-                            transformer=vae_transformer, optimizer=optimizer, loss_object=loss_object)
+    range_klweights = get_klweights(beta_schedule="warmup", n_cycle=1, n_iter=EPOCHS*len(tfdataloader),
+                                    beta_stop=0.5)
+
+    # vae_results = train_VAE(EPOCHS=EPOCHS, train_dataset=tfdataloader, val_dataset=tfdataloader,
+    #                         ckpt_manager=ckpt_manager,
+    #                         transformer=vae_transformer, optimizer=optimizer, loss_object=loss_object, range_klweights=range_klweights)
 
     print("done for VAE Transformer")
+
+    # ----------------------------------------------- Test d_VAE Transformer ----------------------------------------------
+    d_vae_transformer = d_VAETransformer(
+        num_layers=2, d_model=32, num_heads=8, dff=128,
+        input_vocab_size=2500, target_vocab_size=2000,
+        pe_input=10000, pe_target=6000, latent="input")
+
+    ckpt_manager = get_checkpoints(d_vae_transformer, optimizer, checkpoint_path)
+
+    out_path = '../output/temp'
+
+    vae_results = train_VAE(EPOCHS=EPOCHS, train_dataset=tfdataloader, val_dataset=tfdataloader,
+                            ckpt_manager=ckpt_manager,
+                            transformer=d_vae_transformer, optimizer=optimizer, loss_object=loss_object,
+                            range_klweights=range_klweights, out_path=out_path)
+
+    print("done for d_VAE Transformer")
