@@ -17,8 +17,26 @@ def scaled_dot_product_attention(q, k, v, mask, non_linearity=False, scale=True,
     Returns:
       output, attention_weights
     """
+
+    q_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(q), tf.int32))
+    if q_nan > 0:
+        print("INITIAL queries are NAN")
+    v_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(v), tf.int32))
+    if v_nan > 0:
+        print("INITIAL values are NAN")
+    k_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(k), tf.int32))
+    if k_nan > 0:
+        print("INITIAL keys are NAN")
+
+
     scaled_attention_logits = compute_attention_logits(q=q, k=k, v=v, mask=mask, non_linearity=non_linearity, scale=scale)
    # softmax is normalized on the last axis (seq_len_k) so that the scores add up to 1.
+
+    # check if predictions have nan numbers
+    pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(scaled_attention_logits), tf.int32))
+    if pred_nan > 0:
+        print("ATTENTION_LOGITS are NAN in NORMAL ATTENTION")
+
     attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)  # (..., seq_len_q, seq_len_k)
     output = tf.matmul(attention_weights, v)  # (..., seq_len_q, depth_v)
 
@@ -76,18 +94,52 @@ def stochastic_self_attention(q, k, v, mask, subsize=10, temperature=0.1, non_li
       output, attention_weights
     """
     # compute initial attention logits
+    # check if predictions have nan numbers
+    q_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(q), tf.int32))
+    if q_nan > 0:
+        print("queries are NAN")
+    v_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(v), tf.int32))
+    if v_nan > 0:
+        print("values are NAN")
+    k_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(k), tf.int32))
+    if k_nan > 0:
+        print("keys are NAN")
     attention_logits = compute_attention_logits(q,k,v,mask, non_linearity=non_linearity, scale=scale)
+
+    # check if predictions have nan numbers
+    pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(attention_logits), tf.int32))
+    if pred_nan > 0:
+        print("ATTENTION_LOGITS are NAN")
 
     # subsample keys based on the attention weights. # This outputs "relaxed one-hot vectors".
     relaxed_subk = compute_relaxed_subsampling(attention_logits, subsize=subsize, temperature=temperature)
 
+    # check if predictions have nan numbers
+    # pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(relaxed_subk), tf.int32))
+    # if pred_nan > 0:
+    #     print("RELAXED SUB KEYS are NAN")
+
     # get the "relaxed" subset of keys.
     sub_keys = k * relaxed_subk
+
+    # check if predictions have nan numbers
+    # pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(sub_keys), tf.int32))
+    # if pred_nan > 0:
+    #     print("SUB KEYS are NAN")
 
     # compute the new attention logits:
     stochastic_attention_logits = compute_attention_logits(q=q, k=sub_keys, v=v, mask=mask, non_linearity=non_linearity, scale=scale)
 
+    # check if predictions have nan numbers
+    # pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(stochastic_attention_logits), tf.int32))
+    # if pred_nan > 0:
+    #     print("stochastic_attention_logits are NAN")
+
     attention_weights = tf.nn.softmax(stochastic_attention_logits, axis=-1)  # (batch_size, 1, seq_len_k)
+    # check if predictions have nan numbers
+    # pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(attention_weights), tf.int32))
+    # if pred_nan > 0:
+    #     print("attention_weights are NAN")
     initial_attention_weights = tf.nn.softmax(attention_logits, axis=-1) # TO DEBUG
 
     output = tf.matmul(attention_weights, v)  # (..., seq_len_q, depth_v)
@@ -103,9 +155,22 @@ def compute_relaxed_subsampling(attention_logits, subsize=10, temperature=0.5):
 def relaxed_topk(r_keys, subsize=10, temperature=0.5):
     alpha = tf.squeeze(r_keys, axis=-2)
     relaxed_topks = [tf.nn.softmax(alpha/temperature)] # initialization
+    #print("-" * 50)
+    pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(relaxed_topks[0]), tf.int32))
+    # if pred_nan > 0:
+    #     print("INITIAL alpha are NAN")
+    #     print("INIT ALPHA MIN", tf.reduce_min(alpha))
+    #     print("INIT ALPHA MAX", tf.reduce_max(alpha))
+    #print("-"*30)
     for j in range(subsize-1):
         alpha = alpha + tf.math.log(1-tf.nn.softmax(alpha/temperature))
+        #print("MIN ALPHA:{}, MAX ALPHA:{}".format(tf.reduce_min(alpha), tf.reduce_max(alpha)))
+        #pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(alpha), tf.int32))
+        #if pred_nan > 0:
+            #print("alpha are NAN")
         relaxed_topks.append(tf.nn.softmax(alpha/temperature))
+        #print("index: {}, RELAXED TOP KEYS: {}".format(j, relaxed_topks))
+    print("-" * 30)
     relaxed_topks = tf.stack(relaxed_topks, axis=0) # shape (k, batch_size, 1, num_timesteps)
     out = tf.reduce_sum(relaxed_topks, axis=0) # shape (batch_size, 1, num_timesteps)
     return out[:,:,:,tf.newaxis]
@@ -145,6 +210,19 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         q = self.wq(q)  # (batch_size, seq_len, d_model)
         k = self.wk(k)  # (batch_size, seq_len, d_model)
         v = self.wv(v)  # (batch_size, seq_len, d_model)
+
+        # check if predictions have nan numbers
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        q_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(q), tf.int32))
+        if q_nan > 0:
+            print("queries are NAN")
+        v_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(v), tf.int32))
+        if v_nan > 0:
+            print("values are NAN")
+        k_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(k), tf.int32))
+        if k_nan > 0:
+            print("keys are NAN")
+        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 
         q = self.split_heads(q, batch_size)  # (batch_size, num_heads, seq_len_q, depth)
         k = self.split_heads(k, batch_size)  # (batch_size, num_heads, seq_len_k, depth)

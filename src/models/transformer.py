@@ -141,6 +141,10 @@ class VAETransformer(Transformer):
 
         posterior_output, post_attn_weights, look_ahead_mask = self.encode(encoder_input=posterior_input, targets=tar,
                                                                            training=training)
+        # check if predictions have nan numbers
+        pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(posterior_output), tf.int32))
+        if pred_nan > 0:
+            print("ENCODER outputs are NAN")
         prior_output, prior_attn_weights, look_ahead_mask2 = self.encode(
             encoder_input=prior_input, targets=tar, training=training)
 
@@ -152,6 +156,10 @@ class VAETransformer(Transformer):
         mean = recog_mean if training else prior_mean
         logvar = recog_logvar if training else prior_logvar
         z = self.reparameterize(mean, logvar)
+        # check if predictions have nan numbers
+        # pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(z), tf.int32))
+        # if pred_nan > 0:
+        #     print("latent variable z are NAN")
         avg_attn_weights = post_attn_weights if training else prior_attn_weights
 
         # compute vae_loss (without the cross-entropy part)
@@ -161,6 +169,10 @@ class VAETransformer(Transformer):
         # dec_output.shape == (batch_size, tar_seq_len, d_model)
         dec_output, attention_weights = self.decoder(
             tar, z, training, look_ahead_mask)
+        # check if predictions have nan numbers
+        # pred_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(dec_output), tf.int32))
+        # if pred_nan > 0:
+        #     print("DECODER OUTPUTS are NAN")
 
         if self.decoder.latent == "output":
             z = self.output_proj(z)
@@ -201,7 +213,7 @@ class d_VAETransformer(VAETransformer):
             _, (mean_m, logvar_m) = self.get_z_from_encoder_output(enc_output,
                                                                    training=False)  # shape (batch_size, 1, d_model)
             # compute gaussian densities from z, mean_m, logvar_m
-            std_m = tf.exp(logvar_m * 0.5)  # shape (batch_size, 1, d_model)
+            std_m = tf.exp(logvar_m * 0.5 + 1e-6)  # shape (batch_size, 1, d_model)
             gauss_distrib_m = tfp.distributions.MultivariateNormalDiag(loc=mean_m, scale_diag=std_m)
             prob_m = gauss_distrib_m.prob(z)  # shape (batch_size, 1)
             prior_probs.append(prob_m)
@@ -214,17 +226,18 @@ class d_VAETransformer(VAETransformer):
                                                temperature=temperature)
         # get mean and logvar
         _, (mean_posterior, logvar_posterior) = self.get_z_from_encoder_output(enc_output_posterior, training=True)
-        std_posterior = tf.exp(logvar_posterior * 0.5)
+        std_posterior = tf.exp(logvar_posterior * 0.5 + 1e-6)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=mean_posterior, scale_diag=std_posterior)
         prob_posterior = gauss_distrib.prob(z)  # shape (batch_size, 1)
         # compute initial gaussian density from z, recog_mean, recog_logvar:
-        recog_std = tf.exp(recog_logvar * 0.5)
+        recog_std = tf.exp(recog_logvar * 0.5 + 1e-6)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=recog_mean, scale_diag=recog_std)
         recog_prob = gauss_distrib.prob(z)  # shape (batch_size, 1)
         # sum-up all posterior densities:
-        sum_posterior_density = recog_prob + recog_prob + prob_posterior
+        #sum_posterior_density = recog_prob + recog_prob + prob_posterior
+        sum_posterior_density = recog_prob + prob_posterior
         # return log [(K+1/M) sum_prior_densities] - log sum_posterior_densities
-        log_loss = tf.math.log((3 / self.samples_loss) * sum_prior_density) - tf.math.log(sum_posterior_density)
+        log_loss = tf.math.log((3 / self.samples_loss) * sum_prior_density + 1e-6) - tf.math.log(sum_posterior_density +1e-6)
         return tf.reduce_mean(log_loss)
 
     def get_z_from_encoder_output(self, enc_output, training):
