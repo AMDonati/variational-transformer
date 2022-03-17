@@ -50,41 +50,12 @@ def train_step_vae(inp, tar, transformer, optimizer, loss_object, kl_weights):
         loss = ce_loss + kl_weights * kl_loss
         #loss = ce_loss #TODO: for debugging. removing KL term.
 
-    # ce_loss_inf = tf.reduce_sum(tf.cast(tf.math.is_nan(ce_loss), tf.int32))
-    # kl_loss_inf = tf.reduce_sum(tf.cast(tf.math.is_nan(kl_loss), tf.int32))
-    # if ce_loss_inf == 1:
-    #     print("CE LOSS IS NAN")
-    # if kl_loss_inf == 1:
-    #     print("KL LOSS IS NAN")
-    stats_wq, stats_wk, stats_wv = debug_loss(transformer)
-    (min_q, max_q, isnan_q) = stats_wq
-    (min_k, max_k, isnan_k) = stats_wk
-    (min_v, max_v, isnan_v) = stats_wv
-    if isnan_q > 0:
-        print("NAN in WQ")
-    if isnan_k > 0:
-        print("NAN in Wk")
-    if isnan_v > 0:
-        print("NAN in WV")
     gradients = tape.gradient(loss, transformer.trainable_variables)
     optimizer.apply_gradients(zip(gradients, transformer.trainable_variables))
 
     accuracy = accuracy_function(tar_real, predictions)
 
-    print("LOSS", loss)
-
     return (loss, ce_loss, kl_loss), accuracy, attn_weights, kl_weights, (mean, logvar)
-
-def debug_loss(transformer):
-    wv = transformer.encoder.enc_layers[0].mha.wv.kernel
-    wq = transformer.encoder.enc_layers[0].mha.wq.kernel
-    wk = transformer.encoder.enc_layers[0].mha.wk.kernel
-    return (get_stats(wq), get_stats(wk), get_stats(wv))
-
-def get_stats(tensor):
-    is_nan = tf.reduce_sum(tf.cast(tf.math.is_nan(tensor), tf.int32))
-    return (tf.reduce_min(tensor), tf.reduce_max(tensor), is_nan)
-
 
 def eval_step(inp, tar, transformer, loss_object):
     tar_inp = tar[:, :-1]
@@ -110,7 +81,6 @@ def eval_step_vae(inp, tar, transformer, loss_object, kl_weights):
     #loss = ce_loss #TODO: for debugging.
     accuracy = accuracy_function(tar_real, predictions)
 
-    #print("VAL LOSS", loss)
     return (loss, ce_loss, kl_loss), accuracy, attn_weights, ce_loss_posterior, (mean, logvar), (mean_p, logvar_p)
 
 
@@ -202,27 +172,26 @@ def train_VAE(EPOCHS, train_dataset, val_dataset, ckpt_manager, transformer, opt
         val_loss_epoch, val_ce_loss_epoch, val_kl_loss_epoch, val_accuracy_epoch = 0., 0., 0., 0.
 
         for (batch, (inp, tar)) in enumerate(train_dataset):
-            print("GLOBAL STEP", global_step)
             if transformer.__class__ == d_VAETransformer:
                 kl_weights = tf.constant(1., dtype=tf.float32)
             else:
                 kl_weights = tf.constant(range_klweights[global_step], dtype=tf.float32)
             (loss, ce_loss, kl_loss), accuracy_batch, attn_weights, kl_weights, (mean, logvar) = train_step_vae(inp, tar, transformer, optimizer,
                                                                                   loss_object, kl_weights)
-            # check if loss is inf:
-            # ce_loss_inf = tf.reduce_sum(tf.cast(tf.math.is_inf(ce_loss), tf.int32))
-            # kl_loss_inf = tf.reduce_sum(tf.cast(tf.math.is_inf(kl_loss), tf.int32))
-            # if ce_loss_inf == 1:
-            #     print("CE LOSS IS INFINITY")
-            # if kl_loss_inf == 1:
-            #     print("KL LOSS IS INFINITY")
+            #check if loss is inf:
+            ce_loss_inf = tf.reduce_sum(tf.cast(tf.math.is_inf(ce_loss), tf.int32))
+            kl_loss_inf = tf.reduce_sum(tf.cast(tf.math.is_inf(kl_loss), tf.int32))
+            if ce_loss_inf == 1:
+                print("CE LOSS IS INFINITY")
+            if kl_loss_inf == 1:
+                print("KL LOSS IS INFINITY")
 
             # get learnable_query:
             if not transformer.simple_average:
                 learned_q = tf.squeeze(transformer.encoder.learnable_query[:, :, 0])
             else:
                 learned_q = None
-            logvar = tf.math.exp(tf.squeeze(logvar[0,:,0]))
+            logvar = tf.norm(tf.math.exp(tf.squeeze(logvar[0,:,:])), axis=-1)
             if train_writer is not None:
                 write_to_tensorboard(writer=train_writer, loss=loss, ce_loss=ce_loss, kl_loss=kl_loss,
                                      accuracy=accuracy_batch, logvar=logvar, kl_weights=kl_weights, global_step=global_step,

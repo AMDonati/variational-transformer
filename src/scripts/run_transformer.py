@@ -45,6 +45,15 @@ def get_parser():
                         help="number of cyclic schedule for KL annealing.")
     parser.add_argument("-beta_stop", type=float, default=1.,
                         help="maximum value for kl weights.")
+    # d_VAE Transformer params
+    parser.add_argument("-debug_loss", type=int, default=0,
+                        help="simplify loss for debugging or not.")
+    parser.add_argument("-samples_loss", type=int, default=1,
+                        help="number of MC samples to estimate the prior density in the d_VAE loss")
+    parser.add_argument("-subsize", type=float, default=10,
+                        help="size of keys subset for stochastic self-attention.")
+    # TODO: add the temperature for continuous top_k.
+
     # training params.
     parser.add_argument("-bs", type=int, default=32, help="batch size")
     parser.add_argument("-ep", type=int, default=5, help="number of epochs")
@@ -158,11 +167,12 @@ def run(args):
     train_dataset, val_dataset, test_dataset = dataset.data_to_dataset(train_data, val_data, test_data)
     vocab_size = len(dataset.vocab)
 
-    # Create Transformer #TODO: for the d_VAE model: two more parameters: subsize, loss_samples.
+    # Create Transformer
     transformer = models[args.model](
         num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, dff=args.dff,
         input_vocab_size=vocab_size, target_vocab_size=vocab_size,
-        pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop, simple_average=args.simple_average)
+        pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop, simple_average=args.simple_average,
+        debug_loss=args.debug_loss, samples_loss=args.samples_loss, subsize=args.subsize)
 
     # Train Transformer
     learning_rate = CustomSchedule(args.d_model)
@@ -191,10 +201,8 @@ def run(args):
         df_results.to_csv(os.path.join(out_path, "train_history.csv"))
         # plot_results
         (train_key, val_key) = ("train_loss", "val_loss") if args.model == "transformer" else (
-        "train_ce_loss", "val_ce_loss")
+            "train_ce_loss", "val_ce_loss")
         plot_results(results, out_path, train_key, val_key)
-
-    #TODO: solve problem at inference for d_VAE transformer ? In encoder: tensorflow.python.framework.errors_impl.InvalidArgumentError: indices[0,24] = 20110 is not in [0, 20110) [Op:ResourceGather]
 
     # generate text at inference
     if args.inference_split == "test":
@@ -205,7 +213,8 @@ def run(args):
         inference_dataset = train_dataset
     start_token = dataset.vocab["<SOS>"]
     inputs, targets, preds = inference(transformer=transformer, test_dataset=inference_dataset, start_token=start_token,
-                                       temp=args.temp, test_samples=args.test_samples, logger=logger, decoding=args.decoding)
+                                       temp=args.temp, test_samples=args.test_samples, logger=logger,
+                                       decoding=args.decoding)
     inference_path = os.path.join(out_path, "inference")
     if not os.path.isdir(inference_path):
         os.makedirs(inference_path)
@@ -214,7 +223,7 @@ def run(args):
         f.create_dataset('targets', data=targets)
         f.create_dataset('preds', data=preds)
     text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
-    #text_preds = dataset.tokenizer.decode_batch(preds.numpy(), ignored=[], stop_at_end=False)
+    # text_preds = dataset.tokenizer.decode_batch(preds.numpy(), ignored=[], stop_at_end=False)
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())
     text_df = pd.DataFrame.from_records(
@@ -223,8 +232,9 @@ def run(args):
     if args.debug:
         print("debugging text generation using posterior distribution")
         inputs_, targets_, preds_ = inference(transformer=transformer, test_dataset=inference_dataset,
-                                           start_token=start_token,
-                                           temp=args.temp, test_samples=args.test_samples, logger=logger, training=True, decoding=args.decoding)
+                                              start_token=start_token,
+                                              temp=args.temp, test_samples=args.test_samples, logger=logger,
+                                              training=True, decoding=args.decoding)
         text_inputs_ = dataset.tokenizer.decode_batch(inputs_.numpy())
         text_preds_ = dataset.tokenizer.decode_batch(preds_.numpy())
         text_targets_ = dataset.tokenizer.decode_batch(targets_.numpy())
@@ -235,14 +245,16 @@ def run(args):
 
     # generating multiple sentences per input for evaluating selfbleu
     print("generating multiple sentences per input for evaluating self-bleu")
-    inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=inference_dataset, start_token=start_token,
-                                       temp=args.temp, test_samples=10)
+    inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=inference_dataset,
+                                                     start_token=start_token,
+                                                     temp=args.temp, test_samples=10)
     text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())
     text_df = pd.DataFrame.from_records(
         dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
     text_df.to_csv(os.path.join(inference_path, "texts_multi_{}.csv".format(args.inference_split)))
+
 
 if __name__ == '__main__':
     parser = get_parser()
