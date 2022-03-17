@@ -66,7 +66,7 @@ def get_parser():
     parser.add_argument("-temp", type=float, default=0.7, help="temperature for sampling text.")
     parser.add_argument("-inference_split", type=str, default="test", help="split for doing inference on.")
     parser.add_argument("-decoding", type=str, default="sampling", help="method to decode text at inference.")
-    parser.add_argument("-debug", type=int, default=1, help="number of test samples.")
+    parser.add_argument("-debug", type=int, default=0, help="debug text at inference with prior/posterior distribution.")
     return parser
 
 
@@ -129,6 +129,9 @@ def create_out_path(args):
                                                                                 args.beta_stop)
             if args.simple_average:
                 out_file = out_file + "_simpleavg"
+        elif args.model == "d_VAE":
+            out_file = out_file + "_{}".format(args.latent) + "_subset{}".format(
+                args.subsize) + "_{}samples-loss".format(args.samples_loss)
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
     if not os.path.isdir(output_folder):
