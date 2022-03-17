@@ -33,7 +33,7 @@ def inference(transformer, test_dataset, start_token, max_len=21, decoding="samp
     return tf.reshape(all_inputs, shape=(-1, all_inputs.shape[-1])), tf.reshape(all_targets, shape=(-1, all_targets.shape[-1])), tf.reshape(all_preds, shape=(
     -1, all_preds.shape[-1]))
 
-def inference_multisentence(transformer, test_dataset, start_token, max_len=21, temp=1, test_samples=-1, training=False, num_samples=10):
+def inference_multisentence(transformer, test_dataset, start_token, max_len=21, temp=1, test_samples=-1, training=False, num_samples=10, decoding="sampling"):
     all_preds, all_targets, all_inputs = [], [], []
     if test_samples is None:
         test_samples = -1
@@ -46,8 +46,14 @@ def inference_multisentence(transformer, test_dataset, start_token, max_len=21, 
             predictions, _, _, _ = transformer((inputs, tar_inp),
                                          training=training)
             last_pred = predictions[:, -1]
-            last_pred = tf.random.categorical(logits=last_pred / temp, num_samples=num_samples_, dtype=tf.int32)
-            last_pred = tf.reshape(last_pred, shape=(-1,1))
+            if decoding == "sampling":
+                last_pred = tf.random.categorical(logits=last_pred / temp, num_samples=num_samples_, dtype=tf.int32) # shape (B, num_samples) or (B*num_samples)
+            else:
+                last_preds = []
+                for s in range(num_samples_):
+                    last_preds.append(tf.math.argmax(last_pred, axis=-1, output_type=tf.int32))
+                last_pred = tf.stack(last_preds, axis=-1)
+            last_pred = tf.reshape(last_pred, shape=(-1,1)) # shape (B*num_samples, 1)
             tar_inp = tf.repeat(tar_inp, repeats=[num_samples_]*tar_inp.shape[0], axis=0)
             tar_inp = tf.concat([tar_inp, last_pred], axis=-1)
         all_preds.append(tar_inp)
@@ -89,7 +95,7 @@ if __name__ == '__main__':
 
     # Evaluating multisentence inference
     inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=test_dataset, start_token=start_token,
-                                       max_len=10, test_samples=10)
+                                       max_len=10, test_samples=10, decoding="greedy")
     print("preds shape", preds.shape)
     print("targets shape", targets.shape)
 

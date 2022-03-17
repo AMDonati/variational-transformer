@@ -245,15 +245,27 @@ def run(args):
 
     # generating multiple sentences per input for evaluating selfbleu
     print("generating multiple sentences per input for evaluating self-bleu")
+    print("---------------------sampling mode --------------------------------")
     inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=inference_dataset,
                                                      start_token=start_token,
-                                                     temp=args.temp, test_samples=10)
+                                                     temp=args.temp, test_samples=10, decoding="sampling")
     text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
     text_preds = dataset.tokenizer.decode_batch(preds.numpy())
     text_targets = dataset.tokenizer.decode_batch(targets.numpy())
     text_df = pd.DataFrame.from_records(
         dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
-    text_df.to_csv(os.path.join(inference_path, "texts_multi_{}.csv".format(args.inference_split)))
+    text_df.to_csv(os.path.join(inference_path, "texts_multi_{}_sampling.csv".format(args.inference_split)))
+
+    print("---------------------greedy mode --------------------------------")
+    inputs, targets, preds = inference_multisentence(transformer=transformer, test_dataset=inference_dataset,
+                                                     start_token=start_token,
+                                                     temp=args.temp, test_samples=10, decoding="greedy")
+    text_inputs = dataset.tokenizer.decode_batch(inputs.numpy())
+    text_preds = dataset.tokenizer.decode_batch(preds.numpy())
+    text_targets = dataset.tokenizer.decode_batch(targets.numpy())
+    text_df = pd.DataFrame.from_records(
+        dict(zip(["inputs", "targets", "preds"], [text_inputs, text_targets, text_preds])))
+    text_df.to_csv(os.path.join(inference_path, "texts_multi_{}_greedy.csv".format(args.inference_split)))
 
 
 if __name__ == '__main__':
