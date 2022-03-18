@@ -219,16 +219,25 @@ class d_VAETransformer(VAETransformer):
                                                temperature=temperature)
         # get mean and logvar
         _, (mean_posterior, logvar_posterior) = self.get_z_from_encoder_output(enc_output_posterior, training=True)
+        print("MEAN POSTERIOR - MAX", tf.reduce_max(mean_posterior))
+        print("-"*30)
         std_posterior = tf.exp(logvar_posterior * 0.5)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=mean_posterior, scale_diag=std_posterior)
         prob_posterior = gauss_distrib.prob(z)  # shape (batch_size, 1)
         # compute initial gaussian density from z, recog_mean, recog_logvar:
         recog_std = tf.exp(recog_logvar * 0.5)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=recog_mean, scale_diag=recog_std)
+        print("RECOG MEAN - MAX", tf.reduce_max(recog_mean)) #TODO: RECOG_MEAN EXPLOSES... equal to 12 which leads to 10^36 in sum_posterior density !
+        print("-" * 30)
         recog_prob = gauss_distrib.prob(z)  # shape (batch_size, 1)
         # sum-up all posterior densities:
         sum_posterior_density = recog_prob + prob_posterior
         # return log [(K+1/M) sum_prior_densities] - log sum_posterior_densities
+        #print("numerator KL LOSS -min ", tf.reduce_min(sum_prior_density))
+        #print("numerator KL LOSS -max", tf.reduce_max(sum_prior_density))
+        #print("denominateur KL LOSS - min", tf.reduce_min(sum_posterior_density))
+        print("denominateur KL LOSS - max", tf.reduce_max(sum_posterior_density)) #TODO: BUG explose -> 10^31 -> KL infinity !
+        print("-" * 30)
         log_loss = tf.math.log((2 / self.samples_loss) * sum_prior_density + 1e-9) - tf.math.log(sum_posterior_density +1e-9)
         return tf.reduce_mean(log_loss)
 
@@ -236,6 +245,12 @@ class d_VAETransformer(VAETransformer):
     def compute_vae_loss_debug(self, recog_mean, recog_logvar, **kwargs):
         prior_mean = kwargs["prior_mean"]
         prior_logvar = kwargs["prior_logvar"]
+        # print("RECOG MEAN - MAX", tf.reduce_max(
+        #     recog_mean)) #TODO: here ok. stays inferior to one...
+        # print("-" * 30)
+        # print("PRIOR MEAN - MAX", tf.reduce_max(
+        #     prior_mean))
+        # print("-" * 30)
         kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
                                         - tf.math.divide(tf.pow(prior_mean - recog_mean, 2), tf.exp(prior_logvar))
                                         - tf.math.divide(tf.exp(recog_logvar), tf.exp(prior_logvar)), axis=-1)

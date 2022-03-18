@@ -123,12 +123,20 @@ def merge_one_experiment(args):
             text = pd.read_csv(os.path.join(dir_experiment, "inference", "texts_{}.csv".format(args.inference_prefix)))
             if args.test_scores:
                 test_scores = compute_test_metrics(text)
-                text_multi_path = os.path.join(dir_experiment, "inference", "texts_multi_{}.csv".format(args.inference_prefix))
+                text_multi_path = os.path.join(dir_experiment, "inference", "texts_multi_{}_sampling.csv".format(args.inference_prefix))
                 if os.path.exists(text_multi_path):
                     texts_multi = pd.read_csv(text_multi_path)
                     selfbleu = compute_selfbleu(texts_multi)
-                    print("self bleu", selfbleu)
-                    test_scores["selfbleu"] = selfbleu
+                    print("self bleu - sampling", selfbleu)
+                    #test_scores = pd.DataFrame.from_records({"selfbleu_sampling": selfbleu}, index=["scores"])
+                    test_scores["selfbleu_sampling"] = selfbleu
+                text_multi_path = os.path.join(dir_experiment, "inference",
+                                               "texts_multi_{}_greedy.csv".format(args.inference_prefix))
+                if os.path.exists(text_multi_path):
+                    texts_multi = pd.read_csv(text_multi_path)
+                    selfbleu = compute_selfbleu(texts_multi)
+                    print("self bleu - greedy", selfbleu)
+                    test_scores["selfbleu_greedy"] = selfbleu
         if len(dirs) > 1:
             metrics_all_runs = pd.concat(metrics_all_runs)
             metrics = metrics_all_runs.mean(axis=0).apply(lambda t: round(t, args.precision), axis=1)
