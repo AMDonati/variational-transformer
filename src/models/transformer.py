@@ -231,14 +231,16 @@ class d_VAETransformer(VAETransformer):
         print("-" * 30)
         recog_prob = gauss_distrib.prob(z)  # shape (batch_size, 1)
         # sum-up all posterior densities:
-        sum_posterior_density = recog_prob + prob_posterior
+        #sum_posterior_density = recog_prob + prob_posterior
+        sum_posterior_density = recog_prob
+
         # return log [(K+1/M) sum_prior_densities] - log sum_posterior_densities
         #print("numerator KL LOSS -min ", tf.reduce_min(sum_prior_density))
         #print("numerator KL LOSS -max", tf.reduce_max(sum_prior_density))
         #print("denominateur KL LOSS - min", tf.reduce_min(sum_posterior_density))
         print("denominateur KL LOSS - max", tf.reduce_max(sum_posterior_density)) #TODO: BUG explose -> 10^31 -> KL infinity !
         print("-" * 30)
-        log_loss = tf.math.log((2 / self.samples_loss) * sum_prior_density + 1e-9) - tf.math.log(sum_posterior_density +1e-9)
+        log_loss = tf.math.log((1 / self.samples_loss) * sum_prior_density + 1e-9) - tf.math.log(sum_posterior_density +1e-9)
         return tf.reduce_mean(log_loss)
 
 
@@ -293,29 +295,41 @@ if __name__ == '__main__':
     # print(fn_out.shape)  # (batch_size, tar_seq_len, target_vocab_size)
 
     # -------------------------------------- VAE Transformer ----------------------------------------------------------------------------------
-
+    print("-----------------------------------Testing VAE Transformer-------------------------------------------------")
     sample_vae_transformer = VAETransformer(
         num_layers=2, d_model=32, num_heads=8, dff=128,
         input_vocab_size=8500, target_vocab_size=8000,
         pe_input=10000, pe_target=6000, latent="output", rate=0.0)
 
     vae_out, attn_weights, kl_loss, (mean, logvar) = sample_vae_transformer((temp_input, temp_target), training=True)
-    print(kl_loss)
+    #print(kl_loss)
     print(vae_out.shape)
 
     vae_out, _, kl_loss, (mean, logvar) = sample_vae_transformer((temp_input, temp_target), training=False)
-    print(kl_loss)
-    print(vae_out.shape)
+    #print(kl_loss)
+    #print(vae_out.shape)
 
     # -------------------------------------------- test of d_VAE Transformer --------------------------------------#
+    print("---------------------------------------------- Testing d_VAE Transformer ---------------------------------")
     d_vae_transformer = d_VAETransformer(
         num_layers=2, d_model=32, num_heads=8, dff=128,
         input_vocab_size=8500, target_vocab_size=8000,
-        pe_input=10000, pe_target=6000, latent="output", rate=0.0)
+        pe_input=10000, pe_target=6000, latent="attention", rate=0.0, debug_loss=1, subsize=10, samples_loss=1)
 
     vae_out, attn_weights, kl_loss, (mean, logvar) = d_vae_transformer((temp_input, temp_target), training=True)
-    print(kl_loss)
+    print("KL Loss", kl_loss)
     print(vae_out.shape)
+
+    # debug_loss:
+    d_vae_transformer_2 = d_VAETransformer(
+        num_layers=2, d_model=32, num_heads=8, dff=128,
+        input_vocab_size=8500, target_vocab_size=8000,
+        pe_input=10000, pe_target=6000, latent="attention", rate=0.0, debug_loss=0, samples_loss=1, subsize=10)
+
+    vae_out, _, kl_loss, (mean, logvar) = d_vae_transformer_2((temp_input, temp_target), training=True)
+    print("KL LOSS", kl_loss)
+    print(vae_out.shape)
+
 
     vae_out, _, kl_loss, (mean, logvar) = d_vae_transformer((temp_input, temp_target), training=False)
     print(kl_loss)
