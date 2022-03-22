@@ -72,6 +72,7 @@ class VAETransformer(Transformer):
         self.prior_net = tf.keras.layers.Dense(2 * d_model, name='prior_net')
         self.posterior_net = tf.keras.layers.Dense(2 * d_model, name='posterior_net')
         self.simple_average = simple_average
+        self.temperature = kwargs["temperature"]  # dummy variable for d_VAE Transformer
         # self.combination_layer = tf.keras.layers.Dense(d_model)
 
         if self.decoder.latent == "output":
@@ -94,6 +95,7 @@ class VAETransformer(Transformer):
         return eps * tf.exp(logvar * .5) + mean
 
     def compute_vae_loss(self, recog_mean, recog_logvar, **kwargs):
+        '''formula from https://github.com/sodawater/T-CVAE/blob/master/modules.py'''
         prior_mean = kwargs["prior_mean"]
         prior_logvar = kwargs["prior_logvar"]
         kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
@@ -129,10 +131,10 @@ class VAETransformer(Transformer):
             enc_padding_mask, look_ahead_mask = self.create_masks(encoder_input,
                                                                   tar_)
         enc_output, avg_attn_weights = self.encoder(encoder_input, training,
-                                                    enc_padding_mask)  #
+                                                    enc_padding_mask, temperature=self.temperature)  #
         return enc_output, avg_attn_weights, look_ahead_mask
 
-    def call(self, inputs, training, temperature=0.5):
+    def call(self, inputs, training):
         # Keras models prefer if you pass all your inputs in the first argument
         inp, tar = inputs
         tar = tf.cast(tar, dtype=inp.dtype)
@@ -160,7 +162,7 @@ class VAETransformer(Transformer):
 
         # compute vae_loss (without the cross-entropy part)
         kl = self.compute_vae_loss(inputs=inputs, z=z, recog_mean=recog_mean, recog_logvar=recog_logvar,
-                                   prior_mean=prior_mean, prior_logvar=prior_logvar, temperature=temperature)
+                                   prior_mean=prior_mean, prior_logvar=prior_logvar)
 
         # dec_output.shape == (batch_size, tar_seq_len, d_model)
         dec_output, attention_weights = self.decoder(
@@ -175,15 +177,16 @@ class VAETransformer(Transformer):
         return final_output, avg_attn_weights, kl, (mean, logvar)
 
 
-
 class d_VAETransformer(VAETransformer):
     '''has same call function than the VAETransformer. Only the VAE loss and the Encoder model change.'''
+
     def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
                  target_vocab_size, pe_input, pe_target, rate=0.1, latent="attention", simple_average=False, **kwargs):
         super(d_VAETransformer, self).__init__(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                                input_vocab_size=input_vocab_size,
                                                target_vocab_size=target_vocab_size, pe_input=pe_input,
-                                               pe_target=pe_target, rate=rate, latent=latent, simple_average=False)
+                                               pe_target=pe_target, rate=rate, latent=latent, simple_average=False,
+                                               temperature=kwargs["temperature"])
 
         self.encoder = d_VAEEncoder(num_layers=num_layers, d_model=d_model, num_heads=num_heads, dff=dff,
                                     input_vocab_size=input_vocab_size, maximum_position_encoding=pe_input, rate=rate,
@@ -194,55 +197,57 @@ class d_VAETransformer(VAETransformer):
     def compute_vae_loss_(self, recog_mean, recog_logvar, **kwargs):
         # get the M samples from the prior distrib.
         z = kwargs["z"]
-        temperature = kwargs["temperature"]
         inp, tar = kwargs["inputs"]
         enc_padding_mask = create_padding_mask(inp)
         prior_probs = []
         for m in range(self.samples_loss):
             # draw \alphas using the prior path, and get encoder_output from alphas.
             enc_output, _ = self.encoder(inp, training=True,
-                                         mask=enc_padding_mask, temperature=temperature)
+                                         mask=enc_padding_mask, temperature=self.temperature)
             # get their mean_m and logvariance_m
             _, (mean_m, logvar_m) = self.get_z_from_encoder_output(enc_output,
                                                                    training=False)  # shape (batch_size, 1, d_model)
             # compute gaussian densities from z, mean_m, logvar_m
             std_m = tf.exp(logvar_m * 0.5)  # shape (batch_size, 1, d_model)
             gauss_distrib_m = tfp.distributions.MultivariateNormalDiag(loc=mean_m, scale_diag=std_m)
-            prob_m = gauss_distrib_m.prob(z)  # shape (batch_size, 1)
+            prob_m = gauss_distrib_m.log_prob(z)  # shape (batch_size, 1)
             prior_probs.append(prob_m)
-        sum_prior_density = tf.reduce_sum(tf.stack(prior_probs, axis=0), axis=0)  # shape (batch_size, 1)
+        sum_prior_density = tf.stack(prior_probs, axis=0)  # shape (batch_size, 1)
         # sample from posterior one more time (here K=2)
         tar = tf.cast(tar, dtype=inp.dtype)
         encoder_input = tf.concat([inp, tar], axis=1)
         enc_padding_mask = create_padding_mask(encoder_input)
         enc_output_posterior, _ = self.encoder(encoder_input, training=True, mask=enc_padding_mask,
-                                               temperature=temperature)
+                                               temperature=self.temperature)
         # get mean and logvar
         _, (mean_posterior, logvar_posterior) = self.get_z_from_encoder_output(enc_output_posterior, training=True)
         print("MEAN POSTERIOR - MAX", tf.reduce_max(mean_posterior))
-        print("-"*30)
+        print("-" * 30)
         std_posterior = tf.exp(logvar_posterior * 0.5)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=mean_posterior, scale_diag=std_posterior)
-        prob_posterior = gauss_distrib.prob(z)  # shape (batch_size, 1)
+        prob_posterior = gauss_distrib.log_prob(z)  # shape (batch_size, 1)
         # compute initial gaussian density from z, recog_mean, recog_logvar:
         recog_std = tf.exp(recog_logvar * 0.5)
         gauss_distrib = tfp.distributions.MultivariateNormalDiag(loc=recog_mean, scale_diag=recog_std)
-        print("RECOG MEAN - MAX", tf.reduce_max(recog_mean)) #TODO: RECOG_MEAN EXPLOSES... equal to 12 which leads to 10^36 in sum_posterior density !
+        print("RECOG MEAN - MAX", tf.reduce_max(
+            recog_mean))  # TODO: RECOG_MEAN EXPLOSES... equal to 12 which leads to 10^36 in sum_posterior density !
         print("-" * 30)
-        recog_prob = gauss_distrib.prob(z)  # shape (batch_size, 1)
+        recog_prob = gauss_distrib.log_prob(z)  # shape (batch_size, 1)
         # sum-up all posterior densities:
-        #sum_posterior_density = recog_prob + prob_posterior
-        sum_posterior_density = recog_prob
+        sum_posterior_density = tf.stack([recog_prob, prob_posterior])
+        # sum_posterior_density = recog_prob
 
         # return log [(K+1/M) sum_prior_densities] - log sum_posterior_densities
-        #print("numerator KL LOSS -min ", tf.reduce_min(sum_prior_density))
-        #print("numerator KL LOSS -max", tf.reduce_max(sum_prior_density))
-        #print("denominateur KL LOSS - min", tf.reduce_min(sum_posterior_density))
-        print("denominateur KL LOSS - max", tf.reduce_max(sum_posterior_density)) #TODO: BUG explose -> 10^31 -> KL infinity !
-        print("-" * 30)
-        log_loss = tf.math.log((1 / self.samples_loss) * sum_prior_density + 1e-9) - tf.math.log(sum_posterior_density +1e-9)
-        return tf.reduce_mean(log_loss)
-
+        # print("numerator KL LOSS -min ", tf.reduce_min(sum_prior_density))
+        # print("numerator KL LOSS -max", tf.reduce_max(sum_prior_density))
+        # print("denominateur KL LOSS - min", tf.reduce_min(sum_posterior_density))
+        # print("denominateur KL LOSS - max", tf.reduce_max(sum_posterior_density)) #TODO: BUG explose -> 10^31 -> KL infinity !
+        # print("-" * 30)
+        log_loss = tf.math.log(1 / self.samples_loss) + tf.math.reduce_logsumexp(sum_prior_density,
+                                                                                 axis=0) - tf.math.reduce_logsumexp(
+            sum_posterior_density, axis=0)
+        # return - loss term (to compute the ELBO of the NEGATIVE LOG-LIKELIHOOD).
+        return -tf.reduce_mean(log_loss)
 
     def compute_vae_loss_debug(self, recog_mean, recog_logvar, **kwargs):
         prior_mean = kwargs["prior_mean"]
@@ -253,9 +258,9 @@ class d_VAETransformer(VAETransformer):
         # print("PRIOR MEAN - MAX", tf.reduce_max(
         #     prior_mean))
         # print("-" * 30)
-        kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar)
+        kld = -0.5 * tf.math.reduce_sum(1 + (recog_logvar - prior_logvar) # ln(det) part
                                         - tf.math.divide(tf.pow(prior_mean - recog_mean, 2), tf.exp(prior_logvar))
-                                        - tf.math.divide(tf.exp(recog_logvar), tf.exp(prior_logvar)), axis=-1)
+                                        - tf.math.divide(tf.exp(recog_logvar), tf.exp(prior_logvar)), axis=-1) # tr(sigma_0/sigma_1) part
         return tf.reduce_mean(kld)
 
     def compute_vae_loss(self, recog_mean, recog_logvar, **kwargs):
@@ -263,7 +268,6 @@ class d_VAETransformer(VAETransformer):
             return self.compute_vae_loss_debug(recog_mean, recog_logvar, **kwargs)
         else:
             return self.compute_vae_loss_(recog_mean, recog_logvar, **kwargs)
-
 
     def get_z_from_encoder_output(self, enc_output, training):
         if training:
@@ -302,12 +306,12 @@ if __name__ == '__main__':
         pe_input=10000, pe_target=6000, latent="output", rate=0.0)
 
     vae_out, attn_weights, kl_loss, (mean, logvar) = sample_vae_transformer((temp_input, temp_target), training=True)
-    #print(kl_loss)
+    # print(kl_loss)
     print(vae_out.shape)
 
     vae_out, _, kl_loss, (mean, logvar) = sample_vae_transformer((temp_input, temp_target), training=False)
-    #print(kl_loss)
-    #print(vae_out.shape)
+    # print(kl_loss)
+    # print(vae_out.shape)
 
     # -------------------------------------------- test of d_VAE Transformer --------------------------------------#
     print("---------------------------------------------- Testing d_VAE Transformer ---------------------------------")
@@ -330,8 +334,6 @@ if __name__ == '__main__':
     print("KL LOSS", kl_loss)
     print(vae_out.shape)
 
-
     vae_out, _, kl_loss, (mean, logvar) = d_vae_transformer((temp_input, temp_target), training=False)
     print(kl_loss)
     print(vae_out.shape)
-

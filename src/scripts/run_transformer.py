@@ -53,7 +53,8 @@ def get_parser():
     parser.add_argument("-subsize", type=float, default=10,
                         help="size of keys subset for stochastic self-attention.")
     # TODO: add the temperature for continuous top_k.
-
+    parser.add_argument("-temperature", type=float, default=0.5,
+                        help="temperature for gumbel relaxed top_k")
     # training params.
     parser.add_argument("-bs", type=int, default=32, help="batch size")
     parser.add_argument("-ep", type=int, default=5, help="number of epochs")
@@ -131,7 +132,7 @@ def create_out_path(args):
                 out_file = out_file + "_simpleavg"
         elif args.model == "d_VAE":
             out_file = out_file + "_{}".format(args.latent) + "_subset{}".format(
-                args.subsize) + "_{}samples-loss".format(args.samples_loss)
+                args.subsize) + "_{}samples-loss".format(args.samples_loss) + "_temp{}".format(args.temperature)
         datetime_folder = "{}".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
         output_folder = os.path.join(args.output_path, out_file, datetime_folder)
     if not os.path.isdir(output_folder):
@@ -175,7 +176,7 @@ def run(args):
         num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, dff=args.dff,
         input_vocab_size=vocab_size, target_vocab_size=vocab_size,
         pe_input=args.pe, pe_target=args.pe, latent=args.latent, rate=args.p_drop, simple_average=args.simple_average,
-        debug_loss=args.debug_loss, samples_loss=args.samples_loss, subsize=args.subsize)
+        debug_loss=args.debug_loss, samples_loss=args.samples_loss, subsize=args.subsize, temperature=args.temperature)
 
     # Train Transformer
     learning_rate = CustomSchedule(args.d_model)

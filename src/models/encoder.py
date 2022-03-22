@@ -121,14 +121,6 @@ class d_VAEEncoder(VAEEncoder):
         for i in range(self.num_layers):
             x = self.enc_layers[i](x, training, mask)
 
-        #if self.simple_average:
-            #out = tf.reduce_mean(x, axis=1, keepdims=True)
-            #attn_weights = None
-        #else:
-            #average_query = tf.tile(self.learnable_query, multiples=[x.shape[0], 1, 1]) # shape (B, 1, d_model)
-            #out, attn_weights = self.average_attention(q=average_query, k=x, v=x, mask=mask)
-        # out = tf.reduce_mean(x, axis=1, keepdims=True)
-
         average_query = tf.tile(self.learnable_query, multiples=[x.shape[0], 1, 1])  # shape (B, 1, d_model)
         out, attn_weights, initial_attn_weights = self.average_attention(q=average_query, k=x, v=x, mask=mask,
                                                                          temperature=temperature)
