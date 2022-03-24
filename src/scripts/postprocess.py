@@ -63,13 +63,13 @@ def compute_test_metrics(texts):
                               references=[[texts.loc[index]["targets"].split()]])
     bleuscore = bleu_metric.compute()
     print("bleu score", bleuscore)
-    test_scores["bleu"] = bleuscore["google_bleu"]
+    test_scores["bleu"] = np.round(bleuscore["google_bleu"],3)
     predictions = list(texts["preds"])
     references = list(texts["targets"])
     results = bertmetric.compute(predictions=predictions, references=references, lang="en")
     bertscore = np.mean(results["f1"])
     print("bert score", bertscore)
-    test_scores["bertscore"] = bertscore
+    test_scores["bertscore"] = np.round(bertscore,3)
     batch_size = 16
     gpt2ppl = []
     num_batches = np.floor(len(predictions) / batch_size).astype(np.int32)
@@ -82,7 +82,7 @@ def compute_test_metrics(texts):
     #gpt2ppl.append(gpt2_perplexity_batch(predictions[remains:]))
     gpt2ppl = np.mean(gpt2ppl)
     print("gpt2 ppl", gpt2ppl)
-    test_scores["gpt2ppl"] = gpt2ppl
+    test_scores["gpt2ppl"] = np.round(gpt2ppl,0)
     return pd.DataFrame.from_records(test_scores, index=["scores"])
 
 def compute_selfbleu(texts_multi):
@@ -96,7 +96,7 @@ def compute_selfbleu(texts_multi):
                                   references=[ref_sentences])
         i += 1
     bleuscore = bleu_metric.compute()
-    return bleuscore["google_bleu"]
+    return np.round(bleuscore["google_bleu"], 3)
 
 
 def merge_one_experiment(args):
@@ -174,18 +174,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     merge_one_experiment(args)
 
-    # path = "output/temp/VAE_1L_d32_dff32_pe1000_bs32_pdrop0.1_attention_None10-1.0/20220228-171311/inference/texts_multi_test.csv"
-    # texts_multi = pd.read_csv(path)
-    #
-    # bleu_metric = load_metric('google_bleu')
-    # i = 0
-    # while 10*i <= len(texts_multi.index):
-    #     sentences = texts_multi.loc[i*10:(i+1)*10-1]["preds"].to_list()
-    #     for j, sentence in enumerate(sentences):
-    #         ref_sentences = np.delete(sentences, j)
-    #         ref_sentences = [s.split() for s in ref_sentences]
-    #         bleu_metric.add_batch(predictions=[sentence.split()],
-    #                               references=[ref_sentences])
-    #     i += 1
-    # bleuscore = bleu_metric.compute()
-    # print("done")
+    # df = pd.read_csv("output/d_VAE/merge_scores.csv")
+    # df.rename(columns={'Unnamed: 0': 'scores'}, inplace=True)
+    # df = df.round(3).T
+    # df.drop([0, 1], axis=1, inplace=True)
+    # df.to_latex("output/d_VAE/merge_scores.txt")

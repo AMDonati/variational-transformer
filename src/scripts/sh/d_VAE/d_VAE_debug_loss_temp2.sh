@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=d_VAE_debug_temp2
+#SBATCH --job-name=drop0.2_d_VAE_debug_temp2
 #SBATCH --qos=qos_gpu-t3
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
@@ -28,5 +28,6 @@ LATENT="attention"
 SUBSIZE=10
 SAMPLES_LOSS=1
 TEMPERATURE=2.0
+P_DROP=0.2
 
-srun python -u src/scripts/run_transformer.py -model $MODEL -latent $LATENT -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH -subsize $SUBSIZE -debug_loss 1 -samples_loss $SAMPLES_LOSS -temperature $TEMPERATURE
+srun python -u src/scripts/run_transformer.py -model $MODEL -latent $LATENT -num_layers $NUM_LAYERS -d_model $D_MODEL -dff $DFF -bs $BS -ep $EP -output_path $OUTPUT_PATH -subsize $SUBSIZE -debug_loss 1 -samples_loss $SAMPLES_LOSS -temperature $TEMPERATURE -p_drop $P_DROP

@@ -30,3 +30,29 @@ def gpt2_perplexity_batch(sentences):
     ppl = tf.exp(tf.reduce_mean(loss, axis=-1))
     return tf.reduce_mean(ppl).numpy()
 
+# Next sentence prediction with BERT
+# from transformers import BertTokenizer, BertForNextSentencePrediction
+# import torch
+# tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+# model = BertForNextSentencePrediction.from_pretrained('bert-base-uncased')
+#
+# text = ("After Abraham Lincoln won the November 1860 presidential election on an "
+#         "anti-slavery platform, an initial seven slave states declared their "
+#         "secession from the country to form the Confederacy.")
+# text2 = ("War broke out in April 1861 when secessionist forces attacked Fort "
+#          "Sumter in South Carolina, just over a month after Lincoln's "
+#          "inauguration.")
+# inputs = tokenizer(text, text2, return_tensors='pt')
+# inputs.keys()
+# # labels = torch.LongTensor([0])
+# # labels
+# # outputs = model(**inputs, labels=labels)
+# # outputs.keys()
+# # outputs.loss
+# # outputs.loss.item()
+# outputs = model(**inputs)
+# outputs.keys()
+# torch.argmax(outputs.logits)
+# '''from here: https://towardsdatascience.com/bert-for-next-sentence-prediction-466b67f8226f'''
+
+
