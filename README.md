@@ -1,5 +1,9 @@
 # variational-transformer
 
+## Description of the research project
+The research project is described in this [document](https://drive.google.com/file/d/1Yu4hx16hbtbiSu0j6bC3lSueLCKgq6Lj/view?usp=share_link)
+
+
 ### requirements 
 The libraries needed to run the code are provided in the file requirements.txt.
 * To run all the scripts from the origin repo, run first the following command line: `export PYTHONPATH=src:${PYTHONPATH}`
